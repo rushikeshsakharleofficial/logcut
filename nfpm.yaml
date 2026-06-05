@@ -17,6 +17,30 @@ contents:
     dst: /usr/local/bin/logcut
     file_info:
       mode: 0755
+  - src: ./README.md
+    dst: /usr/share/doc/logcut/README.md
+    file_info:
+      mode: 0644
+  - src: ./MANUAL.md
+    dst: /usr/share/doc/logcut/MANUAL.md
+    file_info:
+      mode: 0644
+  - src: ./INSTALL.md
+    dst: /usr/share/doc/logcut/INSTALL.md
+    file_info:
+      mode: 0644
+  - src: ./docs/architecture.md
+    dst: /usr/share/doc/logcut/architecture.md
+    file_info:
+      mode: 0644
+  - src: ./examples/emergency.md
+    dst: /usr/share/doc/logcut/examples/emergency.md
+    file_info:
+      mode: 0644
+  - src: ./LICENSE
+    dst: /usr/share/doc/logcut/LICENSE
+    file_info:
+      mode: 0644
   - dst: /etc/logcut
     type: dir
     file_info:
