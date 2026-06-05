@@ -4,6 +4,13 @@
 
 It streams old log data from the active file, writes that data into a rotated output file, and then frees the matching blocks from the original file using Linux hole punching through Go syscalls. In gzip mode, chunks are appended directly into one final `.gz` archive, so there is no separate merge step.
 
+## Documentation
+
+- [Manual](MANUAL.md)
+- [Installation guide](INSTALL.md)
+- [Architecture](docs/architecture.md)
+- [Emergency example](examples/emergency.md)
+
 ## Why logcut exists
 
 Normal rotation can fail during disk emergencies:
@@ -196,6 +203,8 @@ go run ./cmd/devtool checksums
 logcut.go                         main runtime source
 cmd/devtool/main.go               Go-based build/install/package helper
 cmd/modulecheck/main.go           small Go module bootstrap helper
+MANUAL.md                         user manual
+INSTALL.md                        installation and packaging manual
 go.mod                            Go module file
 nfpm.yaml                         package metadata for deb/rpm generation
 .github/workflows/build-packages.yml  CI package build workflow
