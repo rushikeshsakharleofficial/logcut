@@ -9,6 +9,21 @@
 - The application cannot be restarted or asked to reopen logs.
 - The old logs must be preserved.
 
+## Runtime architecture
+
+The runtime application is written in Go and uses Go APIs/syscalls directly.
+
+It does not shell out to external commands for the compaction operation. In particular, it does not call external `fallocate`, `cp`, `mv`, `split`, or `gzip` commands.
+
+Core runtime dependencies:
+
+- `os` and `io` for file handling
+- `bufio` for line-safe chunk reads
+- `compress/gzip` for gzip archive writing
+- `syscall.Statfs` for free-space checks
+- `syscall.Flock` for lock handling
+- `syscall.SYS_FALLOCATE` for punch-hole
+
 ## Core idea
 
 Instead of copying or moving the full log, `logcut` processes old data in small chunks:
@@ -37,9 +52,15 @@ The remaining 80% is treated as protected buffer for:
 
 Chunk size is recalculated during the run as free space changes.
 
-## Final file state
+## Single archive design
 
-After a gzip run:
+Gzip mode creates one final rotated archive from the beginning:
+
+- No temporary `part0001.gz`, `part0002.gz`, or merge step is required.
+- Each processed chunk is appended as another gzip member to the same output file.
+- Standard gzip readers can read concatenated gzip members in order.
+
+Final result:
 
 - `app.log` remains the active sparse log file.
 - `app.log.rotated.gz` contains the old rotated data.
@@ -57,6 +78,32 @@ For each chunk:
 5. Update state again.
 
 The tool must never punch before the output is safely written.
+
+## State and locking
+
+`logcut` stores state under `/var/lib/logcut` and lock files under `/var/lock`.
+
+The state tracks:
+
+- source path
+- output path
+- source inode and device
+- original size
+- cutoff offset
+- last archived offset
+- last punched offset
+- gzip mode
+
+This allows safer resume behavior after interruption.
+
+## Build and packaging architecture
+
+The build support is also Go-centered.
+
+- `cmd/devtool` handles build, install, package, tarball, checksums, and module bootstrap.
+- The Makefile is a thin wrapper around `go run ./cmd/devtool`.
+- `.deb` and `.rpm` packages are generated with the `nFPM` Go module through `go run`.
+- If `go.mod` is missing, `cmd/devtool modulecheck` can create it using Go file APIs.
 
 ## Limitations
 
