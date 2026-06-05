@@ -1,0 +1,35 @@
+name: logcut
+arch: amd64
+platform: linux
+version: 1.0.0
+release: 1
+section: admin
+priority: optional
+maintainer: Rushikesh Sakharle <rishiananya123@gmail.com>
+description: |
+  Emergency log compaction and rotation tool for Linux servers.
+  logcut streams old data from huge active log files, optionally gzip-compresses it,
+  and frees matching source blocks using Linux hole punching without restarting the app.
+license: MIT
+homepage: https://github.com/rushikeshsakharleofficial/logcut
+contents:
+  - src: ./build/logcut
+    dst: /usr/local/bin/logcut
+    file_info:
+      mode: 0755
+  - dst: /etc/logcut
+    type: dir
+    file_info:
+      mode: 0755
+  - dst: /var/lib/logcut
+    type: dir
+    file_info:
+      mode: 0755
+  - dst: /var/log
+    type: dir
+    file_info:
+      mode: 0755
+  - dst: /var/lock
+    type: dir
+    file_info:
+      mode: 0755
