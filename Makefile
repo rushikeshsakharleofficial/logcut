@@ -1,6 +1,9 @@
 # logcut Makefile
 # Open-source friendly build/install/package targets for Linux systems.
 #
+# Runtime code uses Go APIs/syscalls directly. Packaging uses nFPM, a Go-based
+# package builder, instead of hand-written dpkg-deb/rpmbuild shell packaging.
+#
 # Common usage:
 #   make
 #   sudo make install
@@ -14,8 +17,6 @@
 
 APP_NAME       ?= logcut
 VERSION        ?= 1.0.0
-RELEASE        ?= 1
-ARCH           ?= $(shell uname -m)
 GO             ?= go
 GOOS           ?= linux
 GOARCH         ?= $(shell go env GOARCH 2>/dev/null || echo amd64)
@@ -31,13 +32,13 @@ LOCKDIR        ?= /var/lock
 SRC            ?= $(APP_NAME).go
 BUILD_DIR      ?= build
 DIST_DIR       ?= dist
-PKG_DIR        ?= packaging
 BIN            := $(BUILD_DIR)/$(APP_NAME)
+NFPM           ?= $(shell command -v nfpm 2>/dev/null)
 
 GOFLAGS        ?= -trimpath
 LDFLAGS        ?= -s -w -X main.version=$(VERSION)
 
-.PHONY: all build clean install uninstall reinstall test dry-run package deb rpm tar dist checksums help
+.PHONY: all build clean install uninstall reinstall test dry-run package deb rpm tar dist checksums tools help
 
 all: build
 
@@ -72,89 +73,38 @@ dry-run: build
 	@echo "  $(BIN) --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz"
 
 clean:
-	rm -rf $(BUILD_DIR) $(DIST_DIR) $(PKG_DIR)
+	rm -rf $(BUILD_DIR) $(DIST_DIR)
 	@echo "Cleaned build artifacts"
+
+tools:
+	@echo "Installing nFPM using Go..."
+	$(GO) install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+	@echo "Ensure $$(go env GOPATH)/bin is in PATH, or set NFPM=$$(go env GOPATH)/bin/nfpm"
 
 package: deb rpm
 
-# Build a Debian package without requiring fpm.
 deb: build
-	@rm -rf $(PKG_DIR)/deb
-	@mkdir -p $(PKG_DIR)/deb/DEBIAN
-	@mkdir -p $(PKG_DIR)/deb$(BINDIR)
-	@mkdir -p $(PKG_DIR)/deb$(SYSCONFDIR)
-	@mkdir -p $(PKG_DIR)/deb$(VARLIBDIR)
-	install -m 0755 $(BIN) $(PKG_DIR)/deb$(BINDIR)/$(APP_NAME)
-	@printf '%s\n' \
-		'Package: $(APP_NAME)' \
-		'Version: $(VERSION)' \
-		'Section: admin' \
-		'Priority: optional' \
-		'Architecture: amd64' \
-		'Maintainer: logcut maintainers <maintainers@example.com>' \
-		'Description: Emergency log compaction and rotation tool' \
-		' Logcut safely compacts huge active log files by streaming old data,' \
-		' optionally gzip-compressing it, and freeing original blocks using hole punching.' \
-		> $(PKG_DIR)/deb/DEBIAN/control
-	dpkg-deb --build $(PKG_DIR)/deb $(APP_NAME)_$(VERSION)_amd64.deb
 	@mkdir -p $(DIST_DIR)
-	@mv $(APP_NAME)_$(VERSION)_amd64.deb $(DIST_DIR)/
+	@if [ -z "$(NFPM)" ]; then echo "nfpm not found. Run: make tools"; exit 1; fi
+	$(NFPM) package --packager deb --config nfpm.yaml --target $(DIST_DIR)/$(APP_NAME)_$(VERSION)_amd64.deb
 	@echo "Created $(DIST_DIR)/$(APP_NAME)_$(VERSION)_amd64.deb"
 
-# Build an RPM package using rpmbuild.
 rpm: build
-	@command -v rpmbuild >/dev/null 2>&1 || { echo "rpmbuild not found. Install rpm-build first."; exit 1; }
-	@rm -rf $(PKG_DIR)/rpm
-	@mkdir -p $(PKG_DIR)/rpm/BUILD $(PKG_DIR)/rpm/RPMS $(PKG_DIR)/rpm/SOURCES $(PKG_DIR)/rpm/SPECS $(PKG_DIR)/rpm/SRPMS
-	@mkdir -p $(PKG_DIR)/rpm/root$(BINDIR) $(PKG_DIR)/rpm/root$(SYSCONFDIR) $(PKG_DIR)/rpm/root$(VARLIBDIR)
-	install -m 0755 $(BIN) $(PKG_DIR)/rpm/root$(BINDIR)/$(APP_NAME)
-	@tar -czf $(PKG_DIR)/rpm/SOURCES/$(APP_NAME)-$(VERSION).tar.gz -C $(PKG_DIR)/rpm/root .
-	@printf '%s\n' \
-		'Name: $(APP_NAME)' \
-		'Version: $(VERSION)' \
-		'Release: $(RELEASE)%{?dist}' \
-		'Summary: Emergency log compaction and rotation tool' \
-		'License: MIT' \
-		'BuildArch: x86_64' \
-		'Source0: %{name}-%{version}.tar.gz' \
-		'' \
-		'%description' \
-		'Logcut safely compacts huge active log files by streaming old data,' \
-		'optionally gzip-compressing it, and freeing original blocks using hole punching.' \
-		'' \
-		'%prep' \
-		'%setup -q -c -T' \
-		'tar -xzf %{SOURCE0}' \
-		'' \
-		'%build' \
-		'' \
-		'%install' \
-		'mkdir -p %{buildroot}' \
-		'cp -a * %{buildroot}/' \
-		'' \
-		'%files' \
-		'$(BINDIR)/$(APP_NAME)' \
-		'%dir $(SYSCONFDIR)' \
-		'%dir $(VARLIBDIR)' \
-		'' \
-		'%changelog' \
-		'* Fri Jun 05 2026 logcut maintainers <maintainers@example.com> - $(VERSION)-$(RELEASE)' \
-		'- Initial package' \
-		> $(PKG_DIR)/rpm/SPECS/$(APP_NAME).spec
-	rpmbuild --define "_topdir $(CURDIR)/$(PKG_DIR)/rpm" -bb $(PKG_DIR)/rpm/SPECS/$(APP_NAME).spec
 	@mkdir -p $(DIST_DIR)
-	@cp $(PKG_DIR)/rpm/RPMS/x86_64/*.rpm $(DIST_DIR)/
-	@echo "Created RPM under $(DIST_DIR)/"
+	@if [ -z "$(NFPM)" ]; then echo "nfpm not found. Run: make tools"; exit 1; fi
+	$(NFPM) package --packager rpm --config nfpm.yaml --target $(DIST_DIR)/$(APP_NAME)-$(VERSION)-1.x86_64.rpm
+	@echo "Created $(DIST_DIR)/$(APP_NAME)-$(VERSION)-1.x86_64.rpm"
 
 tar: clean
 	@mkdir -p $(DIST_DIR)/$(APP_NAME)-$(VERSION)
-	@cp $(SRC) Makefile $(DIST_DIR)/$(APP_NAME)-$(VERSION)/
+	@cp $(SRC) go.mod Makefile nfpm.yaml $(DIST_DIR)/$(APP_NAME)-$(VERSION)/
 	@if [ -f README.md ]; then cp README.md $(DIST_DIR)/$(APP_NAME)-$(VERSION)/; fi
+	@if [ -f INSTALL.md ]; then cp INSTALL.md $(DIST_DIR)/$(APP_NAME)-$(VERSION)/; fi
 	@if [ -f LICENSE ]; then cp LICENSE $(DIST_DIR)/$(APP_NAME)-$(VERSION)/; fi
 	@tar -czf $(DIST_DIR)/$(APP_NAME)-$(VERSION).tar.gz -C $(DIST_DIR) $(APP_NAME)-$(VERSION)
 	@echo "Created $(DIST_DIR)/$(APP_NAME)-$(VERSION).tar.gz"
 
-dist: tar deb
+dist: tar deb rpm
 
 checksums:
 	@mkdir -p $(DIST_DIR)
@@ -167,8 +117,9 @@ help:
 	@echo "  make install      Install to $(PREFIX)/bin"
 	@echo "  make uninstall    Remove installed binary only"
 	@echo "  make clean        Remove build/package artifacts"
-	@echo "  make deb          Build .deb package"
-	@echo "  make rpm          Build .rpm package, requires rpmbuild"
+	@echo "  make tools        Install nFPM using Go"
+	@echo "  make deb          Build .deb package using nFPM"
+	@echo "  make rpm          Build .rpm package using nFPM"
 	@echo "  make tar          Build source tarball"
 	@echo "  make checksums    Create SHA256SUMS in dist/"
 	@echo ""
@@ -176,3 +127,4 @@ help:
 	@echo "  PREFIX=/usr       Install under /usr instead of /usr/local"
 	@echo "  DESTDIR=/tmp/pkg  Stage install into a package root"
 	@echo "  VERSION=1.0.0     Set package version"
+	@echo "  NFPM=/path/nfpm   Use a specific nFPM binary"
