@@ -2,6 +2,8 @@
 
 ## Build from source
 
+The project is Go-module based. If dependencies such as the package builder are not already available locally, Go resolves them through modules.
+
 ```bash
 go version
 make
@@ -31,20 +33,33 @@ The uninstall target removes only the binary. It intentionally keeps `/var/lib/l
 
 ## Build packages
 
-Debian/Ubuntu:
+The `.deb` and `.rpm` packages are built through the nFPM Go module. No `dpkg-deb`, `rpmbuild`, `fpm`, `cp`, `mv`, `split`, or gzip shell commands are required for package generation.
+
+Debian package:
 
 ```bash
 make deb
-sudo dpkg -i dist/logcut_1.0.0_amd64.deb
 ```
 
-RHEL/Rocky/CentOS/Fedora:
+RPM package:
 
 ```bash
-sudo dnf install rpm-build
 make rpm
-sudo rpm -ivh dist/logcut-1.0.0-1*.rpm
 ```
+
+Both commands use:
+
+```bash
+go run github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+```
+
+So if the packaging module is not already available, Go downloads and runs it through the module system.
+
+The generated files are placed under `dist/`.
+
+## Runtime behavior
+
+The `logcut` application itself does not shell out to Linux commands for rotation. It uses Go file APIs, gzip APIs, filesystem stat syscalls, file locking, and Linux `fallocate` syscall directly.
 
 ## Usage
 
