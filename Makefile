@@ -1,19 +1,9 @@
 # logcut Makefile
 # Open-source friendly build/install/package targets for Linux systems.
 #
-# Runtime code uses Go APIs/syscalls directly. Packaging uses nFPM, a Go-based
-# package builder, instead of hand-written dpkg-deb/rpmbuild shell packaging.
-#
-# Common usage:
-#   make
-#   sudo make install
-#   sudo make uninstall
-#   make deb
-#   make rpm
-#
-# Override install paths:
-#   sudo make install PREFIX=/usr
-#   make DESTDIR=/tmp/pkgroot install
+# Runtime code uses Go APIs/syscalls directly. Packaging uses the nFPM Go module
+# directly through `go run`; no dpkg-deb, rpmbuild, preinstalled nfpm binary,
+# cp, mv, split, gzip shell commands are used by the logcut application.
 
 APP_NAME       ?= logcut
 VERSION        ?= 1.0.0
@@ -33,12 +23,12 @@ SRC            ?= $(APP_NAME).go
 BUILD_DIR      ?= build
 DIST_DIR       ?= dist
 BIN            := $(BUILD_DIR)/$(APP_NAME)
-NFPM           ?= $(shell command -v nfpm 2>/dev/null)
+NFPM_MODULE    ?= github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
 
 GOFLAGS        ?= -trimpath
 LDFLAGS        ?= -s -w -X main.version=$(VERSION)
 
-.PHONY: all build clean install uninstall reinstall test dry-run package deb rpm tar dist checksums tools help
+.PHONY: all build clean install uninstall reinstall test dry-run package deb rpm tar dist checksums help
 
 all: build
 
@@ -76,23 +66,16 @@ clean:
 	rm -rf $(BUILD_DIR) $(DIST_DIR)
 	@echo "Cleaned build artifacts"
 
-tools:
-	@echo "Installing nFPM using Go..."
-	$(GO) install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
-	@echo "Ensure $$(go env GOPATH)/bin is in PATH, or set NFPM=$$(go env GOPATH)/bin/nfpm"
-
 package: deb rpm
 
 deb: build
 	@mkdir -p $(DIST_DIR)
-	@if [ -z "$(NFPM)" ]; then echo "nfpm not found. Run: make tools"; exit 1; fi
-	$(NFPM) package --packager deb --config nfpm.yaml --target $(DIST_DIR)/$(APP_NAME)_$(VERSION)_amd64.deb
+	$(GO) run $(NFPM_MODULE) package --packager deb --config nfpm.yaml --target $(DIST_DIR)/$(APP_NAME)_$(VERSION)_amd64.deb
 	@echo "Created $(DIST_DIR)/$(APP_NAME)_$(VERSION)_amd64.deb"
 
 rpm: build
 	@mkdir -p $(DIST_DIR)
-	@if [ -z "$(NFPM)" ]; then echo "nfpm not found. Run: make tools"; exit 1; fi
-	$(NFPM) package --packager rpm --config nfpm.yaml --target $(DIST_DIR)/$(APP_NAME)-$(VERSION)-1.x86_64.rpm
+	$(GO) run $(NFPM_MODULE) package --packager rpm --config nfpm.yaml --target $(DIST_DIR)/$(APP_NAME)-$(VERSION)-1.x86_64.rpm
 	@echo "Created $(DIST_DIR)/$(APP_NAME)-$(VERSION)-1.x86_64.rpm"
 
 tar: clean
@@ -117,9 +100,8 @@ help:
 	@echo "  make install      Install to $(PREFIX)/bin"
 	@echo "  make uninstall    Remove installed binary only"
 	@echo "  make clean        Remove build/package artifacts"
-	@echo "  make tools        Install nFPM using Go"
-	@echo "  make deb          Build .deb package using nFPM"
-	@echo "  make rpm          Build .rpm package using nFPM"
+	@echo "  make deb          Build .deb package using nFPM Go module"
+	@echo "  make rpm          Build .rpm package using nFPM Go module"
 	@echo "  make tar          Build source tarball"
 	@echo "  make checksums    Create SHA256SUMS in dist/"
 	@echo ""
@@ -127,4 +109,4 @@ help:
 	@echo "  PREFIX=/usr       Install under /usr instead of /usr/local"
 	@echo "  DESTDIR=/tmp/pkg  Stage install into a package root"
 	@echo "  VERSION=1.0.0     Set package version"
-	@echo "  NFPM=/path/nfpm   Use a specific nFPM binary"
+	@echo "  NFPM_MODULE=...   Override nFPM Go module path/version"
