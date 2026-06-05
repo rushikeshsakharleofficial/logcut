@@ -1,0 +1,9 @@
+/build/
+/dist/
+/packaging/
+*.deb
+*.rpm
+*.tar.gz
+*.sha256
+logcut
+*.test
