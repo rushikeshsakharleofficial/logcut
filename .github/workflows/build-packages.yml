@@ -24,19 +24,13 @@ jobs:
         with:
           go-version: '1.22'
 
-      - name: Install nFPM using Go
-        run: make tools
-
-      - name: Add Go bin to PATH
-        run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
       - name: Build binary
         run: make build
 
-      - name: Build DEB package with nFPM
+      - name: Build DEB package with nFPM Go module
         run: make deb
 
-      - name: Build RPM package with nFPM
+      - name: Build RPM package with nFPM Go module
         run: make rpm
 
       - name: Generate checksums
