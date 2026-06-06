@@ -1,7 +1,7 @@
 name: logcut
 arch: amd64
 platform: linux
-version: 1.0.32
+version: 1.0.33
 release: 1
 section: admin
 priority: optional
