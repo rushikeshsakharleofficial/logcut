@@ -57,10 +57,18 @@ sudo make install PREFIX=/usr
 The install process creates:
 
 - `/usr/local/bin/logcut`, or the selected `PREFIX` path
+- `/usr/share/man/man8/logcut.8`
+- `/usr/share/doc/logcut`
 - `/etc/logcut`
 - `/var/lib/logcut`
 - `/var/log`
 - `/var/lock`
+
+After install, open the manual with:
+
+```bash
+man logcut
+```
 
 ## Uninstall
 
@@ -74,7 +82,7 @@ Direct Go devtool uninstall:
 sudo go run ./cmd/devtool uninstall
 ```
 
-The uninstall target removes only the binary. It intentionally keeps `/var/lib/logcut`, `/etc/logcut`, and logs for safety.
+The uninstall target removes the binary and man page. It intentionally keeps `/var/lib/logcut`, `/etc/logcut`, and logs for safety.
 
 ## Build packages
 
