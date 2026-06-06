@@ -1,6 +1,7 @@
 /build/
 /dist/
 /packaging/
+/config.mk
 *.deb
 *.rpm
 *.tar.gz
