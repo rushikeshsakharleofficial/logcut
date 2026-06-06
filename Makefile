@@ -12,7 +12,7 @@
 -include config.mk
 
 GO ?= go
-SRC ?= .
+SRC ?= ./cmd/logcut
 DEVTOOL := SRC=$(SRC) PREFIX=$(PREFIX) BINDIR=$(BINDIR) SYSCONFDIR=$(SYSCONFDIR) VARLIBDIR=$(VARLIBDIR) LOGDIR=$(LOGDIR) LOCKDIR=$(LOCKDIR) VERSION=$(VERSION) $(GO) run ./cmd/devtool
 
 .PHONY: all modulecheck build install uninstall reinstall clean test dry-run package deb rpm tar dist checksums help
