@@ -42,7 +42,7 @@ func getenv(key, fallback string) string {
 
 func loadConfig() config {
 	return config{
-		Version:    getenv("VERSION", "1.0.2"),
+		Version:    getenv("VERSION", "1.0.3"),
 		Prefix:     getenv("PREFIX", "/usr/local"),
 		DestDir:    getenv("DESTDIR", ""),
 		Goos:       getenv("GOOS", "linux"),
