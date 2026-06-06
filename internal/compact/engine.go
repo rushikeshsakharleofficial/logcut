@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rushikeshsakharleofficial/logcut/internal/control"
 	"github.com/rushikeshsakharleofficial/logcut/internal/disk"
 	"github.com/rushikeshsakharleofficial/logcut/internal/event"
 	"github.com/rushikeshsakharleofficial/logcut/internal/human"
@@ -21,29 +22,32 @@ import (
 )
 
 type Config struct {
-	GzipOutput       bool
-	KeepLastRaw      string
-	WorkingPercent   int64
-	DryRun           bool
-	Force            bool
-	Quiet            bool
-	Verbose          bool
-	JSON             bool
-	ProgressInterval time.Duration
-	StopFreeAboveRaw string
-	StopFreeAbove    int64
-	MaxRuntime       time.Duration
-	LogFile          string
-	CompressLevel    int
-	VerifyMode       string
-	Source           string
-	Output           string
-	KeepLastBytes    int64
-	MinChunk         int64
-	MaxChunk         int64
-	SampleSize       int64
-	StateDir         string
-	LockDir          string
+	GzipOutput         bool
+	KeepLastRaw        string
+	WorkingPercent     int64
+	DryRun             bool
+	Force              bool
+	Quiet              bool
+	Verbose            bool
+	JSON               bool
+	ProgressInterval   time.Duration
+	StopFreeAboveRaw   string
+	StopFreeAbove      int64
+	MaxRuntime         time.Duration
+	RateLimitRaw       string
+	RateLimitBytes     int64
+	SleepBetweenChunks time.Duration
+	LogFile            string
+	CompressLevel      int
+	VerifyMode         string
+	Source             string
+	Output             string
+	KeepLastBytes      int64
+	MinChunk           int64
+	MaxChunk           int64
+	SampleSize         int64
+	StateDir           string
+	LockDir            string
 }
 
 func DefaultConfig() Config {
@@ -68,6 +72,8 @@ func Run(cfg Config) error {
 	}
 	defer closeOut()
 	events := event.Writer{Out: out, Enabled: cfg.JSON}
+	stopper := control.NewStopper()
+	defer stopper.Stop()
 	vlogf(out, cfg, "starting source=%q output=%q gzip=%t dry_run=%t", cfg.Source, cfg.Output, cfg.GzipOutput, cfg.DryRun)
 	events.Emit("start", map[string]interface{}{"source": cfg.Source, "output": cfg.Output, "gzip": cfg.GzipOutput})
 
@@ -80,6 +86,12 @@ func Run(cfg Config) error {
 		cfg.StopFreeAbove, err = human.ParseSize(cfg.StopFreeAboveRaw)
 		if err != nil {
 			return fmt.Errorf("invalid --stop-free-above value: %w", err)
+		}
+	}
+	if cfg.RateLimitRaw != "" {
+		cfg.RateLimitBytes, err = human.ParseSize(cfg.RateLimitRaw)
+		if err != nil {
+			return fmt.Errorf("invalid --rate-limit value: %w", err)
 		}
 	}
 	if cfg.CompressLevel == 0 {
@@ -200,6 +212,11 @@ func Run(cfg Config) error {
 	lastRatio := ratio
 	stopReason := "completed"
 	for offset < cutoff {
+		if stopper.Requested() {
+			stopReason = "signal-" + stopper.Reason()
+			infof(out, cfg, "safe stop requested: %s", stopper.Reason())
+			break
+		}
 		if cfg.MaxRuntime > 0 && time.Since(startedAt) >= cfg.MaxRuntime {
 			stopReason = "max-runtime"
 			infof(out, cfg, "safe stop requested: max runtime reached")
@@ -290,9 +307,10 @@ func Run(cfg Config) error {
 		duration := time.Since(chunkStarted)
 		reporter.Chunk(progress.Snapshot{Chunk: chunkNo, Offset: offset, RawBytes: raw, ArchivedBytes: written, FreeBefore: freeBefore, FreeAfter: freeAfter, NextChunkSize: nextChunkSize, Ratio: lastRatio, ChunkDuration: duration})
 		events.Emit("chunk_done", map[string]interface{}{"chunk": chunkNo, "offset": offset, "raw_bytes": raw, "archived_bytes": written, "free_before": freeBefore, "free_after": freeAfter, "duration_ms": duration.Milliseconds(), "ratio": lastRatio})
+		applyPacing(cfg, raw, duration)
 	}
 
-	if cfg.GzipOutput && cfg.VerifyMode == "full" {
+	if cfg.GzipOutput && cfg.VerifyMode == "full" && stopReason == "completed" {
 		vlogf(out, cfg, "verifying gzip archive path=%q", cfg.Output)
 		if err := verifyGzip(cfg.Output); err != nil {
 			return fmt.Errorf("gzip verification failed: %w", err)
@@ -316,6 +334,18 @@ func Run(cfg Config) error {
 	}
 	events.Emit("complete", map[string]interface{}{"stop_reason": stopReason, "offset": offset, "runtime_ms": time.Since(startedAt).Milliseconds(), "active_real_usage": finalInfo.BlocksUsed})
 	return nil
+}
+
+func applyPacing(cfg Config, raw int64, duration time.Duration) {
+	if cfg.RateLimitBytes > 0 && raw > 0 {
+		minDuration := time.Duration(float64(raw)/float64(cfg.RateLimitBytes)*float64(time.Second))
+		if minDuration > duration {
+			time.Sleep(minDuration - duration)
+		}
+	}
+	if cfg.SleepBetweenChunks > 0 {
+		time.Sleep(cfg.SleepBetweenChunks)
+	}
 }
 
 func outputWriter(cfg Config) (io.Writer, func(), error) {
@@ -351,6 +381,8 @@ func printPlan(w io.Writer, cfg Config, info disk.FileStats, cutoff int64, free 
 	fmt.Fprintln(w, "  Initial chunk:    ", human.FormatBytes(initialChunk))
 	fmt.Fprintln(w, "  Stop free above:  ", human.FormatBytes(cfg.StopFreeAbove))
 	fmt.Fprintln(w, "  Max runtime:      ", cfg.MaxRuntime)
+	fmt.Fprintln(w, "  Rate limit:       ", human.FormatBytes(cfg.RateLimitBytes)+"/s")
+	fmt.Fprintln(w, "  Sleep per chunk:  ", cfg.SleepBetweenChunks)
 	fmt.Fprintln(w, "  Compress level:   ", cfg.CompressLevel)
 	fmt.Fprintln(w, "  Verify mode:      ", cfg.VerifyMode)
 	fmt.Fprintln(w, "  Progress interval:", cfg.ProgressInterval)
