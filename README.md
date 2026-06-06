@@ -27,6 +27,8 @@ Normal rotation can fail during disk emergencies:
 
 - Runtime operations are implemented with Go APIs and Go syscalls.
 - The application does not shell out to `fallocate`, `cp`, `mv`, `split`, or `gzip`.
+- Runtime code is split into small packages under `internal/`.
+- `cmd/logcut` contains only the binary entry point.
 - Package building uses the `nFPM` Go module directly through `go run`.
 - If `go.mod` is missing, the Go dev tool can create it directly using Go file operations.
 - The Makefile is only a thin wrapper around the Go-based developer tool.
@@ -84,6 +86,29 @@ After installation, read the manual:
 man logcut
 ```
 
+## Configure and build
+
+```bash
+./configure
+make
+sudo make install
+```
+
+Install under `/usr`:
+
+```bash
+./configure --prefix=/usr
+make
+sudo make install
+```
+
+Build packages:
+
+```bash
+make deb
+make rpm
+```
+
 ## How it works
 
 Example:
@@ -132,76 +157,6 @@ ls -lh /var/log/app/debug.log
 
 `ls` shows apparent size. `du` shows real allocated disk usage.
 
-## Build from source
-
-The build flow is Go-based. The Makefile calls `go run ./cmd/devtool`.
-
-```bash
-make
-sudo make install
-```
-
-Install under `/usr` instead of `/usr/local`:
-
-```bash
-sudo make install PREFIX=/usr
-```
-
-Run the Go dev tool directly:
-
-```bash
-go run ./cmd/devtool build
-sudo go run ./cmd/devtool install
-```
-
-If `go.mod` is missing, create it using Go code:
-
-```bash
-go run ./cmd/devtool modulecheck
-```
-
-Uninstall:
-
-```bash
-sudo make uninstall
-```
-
-## Build packages
-
-Packages are generated with the `nFPM` Go module. No `dpkg-deb` or `rpmbuild` command is required.
-
-Debian package:
-
-```bash
-make deb
-```
-
-RPM package:
-
-```bash
-make rpm
-```
-
-Source tarball:
-
-```bash
-make tar
-```
-
-Checksums:
-
-```bash
-make checksums
-```
-
-Direct Go dev tool examples:
-
-```bash
-go run ./cmd/devtool deb
-go run ./cmd/devtool rpm
-go run ./cmd/devtool checksums
-```
-
 ## Versioning
 
 The source of truth is `VERSION.txt`.
@@ -209,7 +164,7 @@ The source of truth is `VERSION.txt`.
 On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments the patch version automatically. The bump updates:
 
 - `VERSION.txt`
-- `version.go`, used by `logcut --version`
+- `internal/version/version.go`, used by `logcut --version`
 - `nfpm.yaml`, used by `.deb` and `.rpm`
 - `man/logcut.8`, used by `man logcut`
 - `cmd/devtool/main.go`, used by `make`, `make deb`, and `make rpm`
@@ -230,19 +185,24 @@ The package workflow then builds packages from the bumped version.
 ## Repository layout
 
 ```text
-VERSION.txt                       source of truth for auto patch version
-version.go                        runtime version support for logcut --version
-logcut.go                         main runtime source
+cmd/logcut/main.go                binary entry point
 cmd/devtool/main.go               Go-based build/install/package helper
-cmd/modulecheck/main.go           small Go module bootstrap helper
 cmd/versionbump/main.go           auto version bump helper
+internal/cli/                     CLI parsing and validation
+internal/compact/                 compaction engine
+internal/disk/                    statfs and punch-hole helpers
+internal/human/                   size parsing and formatting
+internal/lock/                    lock handling
+internal/state/                   resume state file handling
+internal/version/                 runtime version support
 man/logcut.8                      Unix manual page for man logcut
-MANUAL.md                         user manual
-INSTALL.md                        installation and packaging manual
-go.mod                            Go module file
+configure                         creates config.mk for make install
+Makefile                          thin wrapper around cmd/devtool
+VERSION.txt                       source of truth for auto patch version
 nfpm.yaml                         package metadata for deb/rpm generation
 .github/workflows/auto-version-bump.yml  auto patch bump workflow
 .github/workflows/build-packages.yml      CI package build workflow
+.github/workflows/package-commit.yml      package commit workflow
 docs/architecture.md              architecture details
 examples/emergency.md             emergency usage example
 ```
