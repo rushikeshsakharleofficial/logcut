@@ -1,6 +1,6 @@
 package version
 
-var Version = "1.0.23"
+var Version = "1.0.24"
 
 func String() string {
 	return Version
