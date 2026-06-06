@@ -10,6 +10,9 @@ on:
     types:
       - published
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build logcut packages
@@ -18,6 +21,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -44,6 +49,23 @@ jobs:
             dist/*.deb
             dist/*.rpm
             dist/SHA256SUMS
+
+      - name: Commit generated packages to repository
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        run: |
+          mkdir -p packages
+          cp dist/*.deb packages/
+          cp dist/*.rpm packages/
+          cp dist/SHA256SUMS packages/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages/
+          if git diff --cached --quiet; then
+            echo "No package changes to commit"
+          else
+            git commit -m "Add generated packages for logcut 1.0.2 [skip ci]"
+            git push
+          fi
 
       - name: Upload packages to GitHub Release
         if: github.event_name == 'release'
