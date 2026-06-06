@@ -10,30 +10,29 @@ It preserves old log data in a rotated output file and frees the matching old bl
 
 ```bash
 logcut [options] <source-log> <rotated-output>
+logcut status <source-log> <rotated-output>
+logcut list-state
+logcut clean-state <source-log> <rotated-output>
 ```
 
-Plain mode:
+Recommended production emergency mode:
 
 ```bash
-sudo logcut file1.log file1.rotated.log
+sudo logcut -v \
+  --log-file /var/log/logcut-run.log \
+  --stop-free-above 20G \
+  --max-runtime 30m \
+  --rate-limit 100M \
+  --sleep-between-chunks 500ms \
+  --compress-level 1 \
+  -g -k 10G \
+  file1.log file1.rotated.log.gz
 ```
 
-Gzip mode:
+Preflight:
 
 ```bash
-sudo logcut -g file1.log file1.rotated.log.gz
-```
-
-Recommended emergency mode:
-
-```bash
-sudo logcut -g -k 10G file1.log file1.rotated.log.gz
-```
-
-Verbose emergency mode:
-
-```bash
-sudo logcut -v -g -k 10G file1.log file1.rotated.log.gz
+sudo logcut --preflight -g -k 10G file1.log file1.rotated.log.gz
 ```
 
 Dry run:
@@ -46,33 +45,17 @@ sudo logcut --dry-run -g -k 10G file1.log file1.rotated.log.gz
 
 ### `-g`
 
-Enable gzip output.
-
-In this mode, all chunks are appended directly into one final gzip archive. There is no separate chunk merge step.
+Enable gzip output. In this mode, all chunks are appended directly into one final gzip archive. There is no separate chunk merge step.
 
 ### `-k <size>`
 
-Keep the latest part of the active log untouched.
-
-Examples:
-
-```bash
--k 10G
--k 512M
--k 1G
-```
+Keep the latest part of the active log untouched. Examples: `10G`, `512M`, `1G`.
 
 If `-k` is not provided, `logcut` keeps the latest 10% of the source log size.
 
 ### `-p <percent>`
 
-Use only this percentage of current free disk as the working budget for the next chunk.
-
-Default:
-
-```bash
--p 20
-```
+Use only this percentage of current free disk as the working budget for the next chunk. Default is `20`.
 
 This means only 20% of available free space is considered usable for the next chunk operation. The remaining 80% is protected for application writes and sudden spikes.
 
@@ -82,17 +65,78 @@ Enable verbose logs.
 
 Verbose mode prints detailed per-step and per-chunk status, including read, archive, punch-hole, chunk duration, compression ratio, free space before/after, recovered estimate, and next chunk size.
 
-### `--progress-interval <duration>`
+### `--preflight`
 
-Set progress summary frequency. Default is `5s`.
+Run safety checks only. Preflight validates source/output paths, regular-file status, write access, punch-hole support, output directory, state and lock directories, free space, and existing state.
+
+### `--stop-free-above <size>`
+
+Stop safely after the current chunk once free space reaches the requested amount.
+
+Example:
+
+```bash
+--stop-free-above 20G
+```
+
+This is useful during incidents where the first goal is to recover enough disk space, not necessarily process the entire old range.
+
+### `--max-runtime <duration>`
+
+Stop safely after the current chunk once the runtime limit is reached.
+
+Example:
+
+```bash
+--max-runtime 30m
+```
+
+### `--rate-limit <size>`
+
+Approximate raw processing rate limit per second.
+
+Example:
+
+```bash
+--rate-limit 100M
+```
+
+This reduces I/O pressure on the live application by pacing chunk processing.
+
+### `--sleep-between-chunks <duration>`
+
+Pause after each completed safe chunk.
 
 Examples:
 
 ```bash
---progress-interval 10s
---progress-interval 30s
---progress-interval 1m
+--sleep-between-chunks 500ms
+--sleep-between-chunks 2s
 ```
+
+### `--log-file <path>`
+
+Also write run output to a log file for audit and incident records.
+
+### `--json`
+
+Emit JSON events instead of normal human progress logs. Useful for automation, monitoring integrations, and future UI wrappers.
+
+### `--compress-level <level>`
+
+Set gzip compression level. Use `1` for fastest emergency recovery, `9` for best compression, or `-1` for Go gzip default.
+
+### `--verify full|none`
+
+Control final gzip verification. `full` verifies the archive after completion. `none` skips verification when time is critical.
+
+### `--state-dir <dir>` and `--lock-dir <dir>`
+
+Override state and lock directories.
+
+### `--progress-interval <duration>`
+
+Set progress summary frequency. Default is `5s`.
 
 ### `--quiet`
 
@@ -102,13 +146,15 @@ Suppress progress and verbose output.
 
 Show the plan without modifying files.
 
-Always use dry-run before running on production logs.
-
 ### `--force`
 
-Allow risky plain output on low disk.
+Allow risky plain output on low disk. Plain output is not recommended during low-disk emergencies because it does not compress the rotated output.
 
-Plain output is not recommended during low-disk emergencies because it does not compress the rotated output.
+## Graceful stop behavior
+
+If `logcut` receives SIGINT or SIGTERM, it records the stop request and exits only at a safe chunk boundary. It does not intentionally stop halfway through the archive, sync, state-save, or punch-hole sequence.
+
+The saved state allows a later run to resume.
 
 ## Runtime output
 
@@ -119,14 +165,7 @@ Default output shows the plan and periodic progress summaries:
 [2026-06-06 10:00:05] progress: 12.50% done=10.00G remaining=70.00G speed=200.00M/s elapsed=50s eta=5m50s
 ```
 
-Verbose mode adds detailed chunk logs:
-
-```text
-[2026-06-06 10:00:01] verbose: chunk=1 status=read offset=0B target_chunk=512.00M
-[2026-06-06 10:00:02] verbose: chunk=1 status=archive raw=512.00M
-[2026-06-06 10:00:03] verbose: chunk=1 status=punch offset=0B length=512.00M
-[2026-06-06 10:00:03] verbose: chunk=1 status=done raw=512.00M archived=64.00M punched=512.00M ratio=12.50% chunk_time=2s free_before=1.00G free_after=1.44G recovered=+448.00M next_chunk=512.00M
-```
+Verbose mode adds detailed chunk logs.
 
 ## What happens during gzip mode
 
@@ -148,7 +187,17 @@ Flow:
 6. Save state.
 7. Punch-hole the same old byte range from `debug.log`.
 8. Recalculate free space and next chunk size.
-9. Continue until the old range is complete.
+9. Continue until the old range is complete or a safe stop condition is reached.
+
+## State commands
+
+```bash
+logcut status file1.log file1.rotated.log.gz
+logcut list-state
+logcut clean-state file1.log file1.rotated.log.gz
+```
+
+`clean-state` archives the state file with a timestamp instead of deleting it directly.
 
 ## Important file-size behavior
 
@@ -202,17 +251,6 @@ make rpm
 
 All build helper logic is implemented in Go under `cmd/devtool`.
 
-Direct Go devtool usage:
-
-```bash
-go run ./cmd/devtool build
-go run ./cmd/devtool install
-go run ./cmd/devtool deb
-go run ./cmd/devtool rpm
-```
-
-Package generation uses the nFPM Go module directly through Go module resolution.
-
 ## Module bootstrap
 
 If `go.mod` is missing:
@@ -228,12 +266,14 @@ This creates `go.mod` using Go file APIs.
 Before production use:
 
 1. Confirm the filesystem supports hole punching.
-2. Run dry-run first.
-3. Use gzip mode for emergency cases.
-4. Keep enough latest log data using `-k`.
-5. Keep the default `-p 20` unless you understand the risk.
-6. Verify recovered space with `du`, not only `ls`.
-7. Disable or reduce debug logging after the emergency.
+2. Run `--preflight` first.
+3. Run `--dry-run` if time allows.
+4. Use gzip mode for emergency cases.
+5. Keep enough latest log data using `-k`.
+6. Keep the default `-p 20` unless you understand the risk.
+7. Use `--rate-limit` or `--sleep-between-chunks` on busy disks.
+8. Verify recovered space with `du`, not only `ls`.
+9. Disable or reduce debug logging after the emergency.
 
 ## Limitations
 
