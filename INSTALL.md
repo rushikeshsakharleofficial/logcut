@@ -7,6 +7,50 @@
 - Filesystem with hole-punch support, usually XFS or ext4
 - Root or sufficient permission to read/write the target log and punch holes
 
+## Configure before build
+
+`logcut` supports a standard configure step before `make`.
+
+Default configuration:
+
+```bash
+./configure
+make
+sudo make install
+```
+
+Install under `/usr` instead of `/usr/local`:
+
+```bash
+./configure --prefix=/usr
+make
+sudo make install
+```
+
+Install the binary under `/usr/sbin`:
+
+```bash
+./configure --prefix=/usr --bindir=/usr/sbin
+make
+sudo make install
+```
+
+Supported configure options:
+
+```text
+--prefix=PATH        install prefix, default: /usr/local
+--bindir=PATH        binary install directory, default: PREFIX/bin
+--sysconfdir=PATH    config directory, default: /etc/logcut
+--varlibdir=PATH     state directory, default: /var/lib/logcut
+--logdir=PATH        log directory, default: /var/log
+--lockdir=PATH       lock directory, default: /var/lock
+--go=PATH            Go command, default: go
+--version=VERSION    build/package version override
+--src=PATH           Go package source, default: .
+```
+
+The configure script writes `config.mk`, which is loaded by the Makefile.
+
 ## Build from source
 
 The project is Go-module based. If required Go modules are not already available locally, Go resolves them through the module system.
@@ -51,18 +95,19 @@ sudo go run ./cmd/devtool install
 Install under `/usr/bin/logcut` instead:
 
 ```bash
-sudo make install PREFIX=/usr
+./configure --prefix=/usr
+sudo make install
 ```
 
 The install process creates:
 
-- `/usr/local/bin/logcut`, or the selected `PREFIX` path
+- the configured `logcut` binary path
 - `/usr/share/man/man8/logcut.8`
 - `/usr/share/doc/logcut`
-- `/etc/logcut`
-- `/var/lib/logcut`
-- `/var/log`
-- `/var/lock`
+- the configured config directory
+- the configured state directory
+- the configured log directory
+- the configured lock directory
 
 After install, open the manual with:
 
@@ -82,7 +127,7 @@ Direct Go devtool uninstall:
 sudo go run ./cmd/devtool uninstall
 ```
 
-The uninstall target removes the binary and man page. It intentionally keeps `/var/lib/logcut`, `/etc/logcut`, and logs for safety.
+The uninstall target removes the binary and man page. It intentionally keeps state, config, and logs for safety.
 
 ## Build packages
 
@@ -176,6 +221,7 @@ sudo logcut -g -k 10G file1.log file1.rotated.log.gz
 -p <percent>    use only this percent of current free disk as working budget, default 20
 --dry-run       print plan only
 --force         allow risky plain output on low disk
+--version       print logcut version
 ```
 
 ## Disk-safety rule
