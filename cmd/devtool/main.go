@@ -48,7 +48,7 @@ func getenv(key, fallback string) string {
 func loadConfig() config {
 	prefix := getenv("PREFIX", "/usr/local")
 	return config{
-		Version:    getenv("VERSION", "1.0.16"),
+		Version:    getenv("VERSION", "1.0.17"),
 		Prefix:     prefix,
 		BinDir:     getenv("BINDIR", filepath.Join(prefix, "bin")),
 		SysconfDir: getenv("SYSCONFDIR", "/etc/logcut"),
