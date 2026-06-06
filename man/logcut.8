@@ -1,0 +1,144 @@
+.TH LOGCUT 8 "June 2026" "logcut 1.0.0" "System Administration"
+.SH NAME
+logcut \- emergency log compaction and rotation without restarting the application
+.SH SYNOPSIS
+.B logcut
+.RI [ options ]
+.I source-log
+.I rotated-output
+.PP
+.B logcut
+.B -g
+.RB [ -k
+.IR size ]
+.RB [ -p
+.IR percent ]
+.I source-log
+.I rotated-output.gz
+.SH DESCRIPTION
+.B logcut
+is an emergency log compaction tool for Linux systems where a single active log
+file has consumed most of the disk and the application cannot be restarted or
+asked to reopen its log file.
+.PP
+The tool reads old data from the active source log, writes that data into a
+rotated output file, and then frees the matching old byte range from the source
+file using Linux hole punching through Go syscalls.
+.PP
+In gzip mode, each processed chunk is compressed and appended directly into one
+final gzip archive. No temporary part files and no separate merge step are
+required.
+.PP
+The source log path is not renamed, removed, or replaced. The application can
+continue writing to the same file descriptor.
+.SH OPTIONS
+.TP
+.B -g
+Enable gzip output. This is the recommended mode for low-disk emergencies.
+Chunks are appended directly into one final gzip archive.
+.TP
+.BI -k " size"
+Keep the latest part of the active source log untouched. Examples: 10G, 512M,
+1G. If this option is not provided, logcut keeps the latest 10 percent of the
+source log size.
+.TP
+.BI -p " percent"
+Use only this percentage of currently free disk space as the working budget for
+the next chunk. The default is 20. The remaining free space is treated as a
+protected buffer for application writes and sudden spikes.
+.TP
+.B --dry-run
+Print the compaction plan without modifying files.
+.TP
+.B --force
+Allow risky plain output on low disk. Plain output is not recommended during
+emergencies because it does not compress rotated data.
+.SH EXAMPLES
+.TP
+Plain rotated output:
+.B sudo logcut file1.log file1.rotated.log
+.TP
+Gzip emergency mode:
+.B sudo logcut -g file1.log file1.rotated.log.gz
+.TP
+Recommended emergency mode keeping latest 10 GB active:
+.B sudo logcut -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+.TP
+Dry run:
+.B sudo logcut --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+.SH HOW IT WORKS
+For each chunk, logcut performs the following sequence:
+.IP 1. 4
+Read old data from the active source log.
+.IP 2. 4
+Stop on a newline boundary where possible.
+.IP 3. 4
+Write the chunk to the rotated output. In gzip mode, the chunk is compressed
+using Go gzip APIs.
+.IP 4. 4
+Sync the output file.
+.IP 5. 4
+Update state under /var/lib/logcut.
+.IP 6. 4
+Punch a hole in the same byte range of the original source log.
+.IP 7. 4
+Recalculate free space and choose the next safe chunk size.
+.PP
+The tool must never punch a source range before the matching output data has
+been written and synced.
+.SH DISK SAFETY
+By default, logcut uses only 20 percent of currently free disk space as the
+working budget for the next chunk. This protects the remaining free space for
+application log growth, system logs, metadata updates, and sudden write spikes.
+.PP
+The chunk size is recalculated during the run. If free space improves, chunks
+may become larger. If free space drops, chunks become smaller or the tool stops
+safely.
+.SH SPARSE FILE BEHAVIOR
+After compaction, the source log becomes sparse. The apparent size shown by
+.BR ls (1)
+may still look large, while the real disk usage shown by
+.BR du (1)
+should be reduced.
+.PP
+Historical data should be read from the rotated output file, not from the old
+beginning of the sparse active source log.
+.SH FILES
+.TP
+.I /var/lib/logcut
+State files used for resume safety.
+.TP
+.I /var/lock
+Lock files used to prevent multiple logcut processes from operating on the same
+source and output pair.
+.TP
+.I /usr/share/doc/logcut
+Package documentation.
+.SH REQUIREMENTS
+Linux with filesystem support for hole punching. Common filesystems such as XFS
+and ext4 usually support this when mounted normally.
+.PP
+Root or sufficient permissions are normally required to read/write application
+logs and punch holes.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Runtime error, unsafe condition, or operation failure.
+.TP
+.B 2
+Invalid command-line usage.
+.SH NOTES
+The runtime program uses Go APIs and Go syscalls directly. It does not shell out
+to external commands such as fallocate, cp, mv, split, or gzip for the log
+compaction operation.
+.SH SEE ALSO
+.BR du (1),
+.BR ls (1),
+.BR gzip (1)
+.SH AUTHOR
+Rushikesh Sakharle
+.SH LICENSE
+MIT License.
