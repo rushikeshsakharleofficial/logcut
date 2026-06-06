@@ -44,6 +44,8 @@ Normal rotation can fail during disk emergencies:
 - Cuts only on newline boundaries where possible.
 - Frees old blocks using punch-hole after safe archive write.
 - Uses state and lock files for safer resume behavior.
+- Shows progress summaries with percentage, speed, elapsed time, ETA, and remaining bytes.
+- Supports `-v` verbose mode for per-step and per-chunk logs.
 - Supports dry-run planning.
 - Installs a Unix manual page at `/usr/share/man/man8/logcut.8`.
 - Supports `logcut --version`.
@@ -68,6 +70,12 @@ Recommended emergency usage:
 sudo logcut -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 ```
 
+Verbose emergency usage:
+
+```bash
+sudo logcut -v -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+```
+
 Dry run first:
 
 ```bash
@@ -85,6 +93,32 @@ After installation, read the manual:
 ```bash
 man logcut
 ```
+
+## Runtime output
+
+Default output shows the plan and periodic progress summaries:
+
+```text
+[2026-06-06 10:00:00] progress: starting total=80.00G already_done=0B remaining=80.00G
+[2026-06-06 10:00:05] progress: 12.50% done=10.00G remaining=70.00G speed=200.00M/s elapsed=50s eta=5m50s
+```
+
+Use `-v` when you need detailed logs for each internal step:
+
+```text
+[2026-06-06 10:00:01] verbose: chunk=1 status=read offset=0B target_chunk=512.00M
+[2026-06-06 10:00:02] verbose: chunk=1 status=archive raw=512.00M
+[2026-06-06 10:00:03] verbose: chunk=1 status=punch offset=0B length=512.00M
+[2026-06-06 10:00:03] verbose: chunk=1 status=done raw=512.00M archived=64.00M punched=512.00M ratio=12.50% chunk_time=2s free_before=1.00G free_after=1.44G recovered=+448.00M next_chunk=512.00M
+```
+
+Use `--progress-interval` to control summary frequency:
+
+```bash
+sudo logcut --progress-interval 10s -g -k 10G app.log app.rotated.log.gz
+```
+
+Use `--quiet` to suppress progress/log output.
 
 ## Configure and build
 
@@ -174,12 +208,15 @@ The package workflow then builds packages from the bumped version.
 ## Options
 
 ```text
--g              write gzip rotated archive
--k <size>       keep latest part in active log, default: 10% of source size
--p <percent>    use only this % of current free space as working budget, default: 20
---dry-run       print plan only, do not modify files
---force         allow risky plain output on low disk
---version       print logcut version
+-g                         write gzip rotated archive
+-k <size>                  keep latest part in active log, default: 10% of source size
+-p <percent>               use only this % of current free space as working budget, default: 20
+-v                         verbose logs with per-step and per-chunk details
+--progress-interval <dur>  progress summary interval, default: 5s
+--quiet                    suppress progress/log output
+--dry-run                  print plan only, do not modify files
+--force                    allow risky plain output on low disk
+--version                  print logcut version
 ```
 
 ## Repository layout
@@ -193,6 +230,7 @@ internal/compact/                 compaction engine
 internal/disk/                    statfs and punch-hole helpers
 internal/human/                   size parsing and formatting
 internal/lock/                    lock handling
+internal/progress/                progress and verbose output reporter
 internal/state/                   resume state file handling
 internal/version/                 runtime version support
 man/logcut.8                      Unix manual page for man logcut
