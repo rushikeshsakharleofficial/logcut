@@ -1,0 +1,62 @@
+name: Package and commit artifacts
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - 'packages/**'
+      - '.github/workflows/build-packages.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Read version
+        id: v
+        run: |
+          V=$(cat VERSION.txt | tr -d '[:space:]')
+          echo "value=$V" >> "$GITHUB_OUTPUT"
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+
+      - name: Build packages
+        run: |
+          VERSION="$VERSION" make deb
+          VERSION="$VERSION" make rpm
+
+      - name: Verify packages
+        run: |
+          test -s "dist/logcut_${VERSION}_amd64.deb"
+          test -s "dist/logcut-${VERSION}-1.x86_64.rpm"
+          VERSION="$VERSION" make checksums
+          grep -F "logcut_${VERSION}_amd64.deb" dist/SHA256SUMS
+          grep -F "logcut-${VERSION}-1.x86_64.rpm" dist/SHA256SUMS
+
+      - name: Store packages in repo
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'push'
+        run: |
+          mkdir -p packages
+          cp "dist/logcut_${VERSION}_amd64.deb" packages/
+          cp "dist/logcut-${VERSION}-1.x86_64.rpm" packages/
+          cp dist/SHA256SUMS packages/SHA256SUMS
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add packages
+          if git diff --cached --quiet; then
+            echo "No package changes"
+          else
+            git commit -m "Add generated packages for logcut ${VERSION} [skip ci]"
+            git push
+          fi
