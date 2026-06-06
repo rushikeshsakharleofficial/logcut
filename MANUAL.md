@@ -30,6 +30,12 @@ Recommended emergency mode:
 sudo logcut -g -k 10G file1.log file1.rotated.log.gz
 ```
 
+Verbose emergency mode:
+
+```bash
+sudo logcut -v -g -k 10G file1.log file1.rotated.log.gz
+```
+
 Dry run:
 
 ```bash
@@ -70,6 +76,28 @@ Default:
 
 This means only 20% of available free space is considered usable for the next chunk operation. The remaining 80% is protected for application writes and sudden spikes.
 
+### `-v`
+
+Enable verbose logs.
+
+Verbose mode prints detailed per-step and per-chunk status, including read, archive, punch-hole, chunk duration, compression ratio, free space before/after, recovered estimate, and next chunk size.
+
+### `--progress-interval <duration>`
+
+Set progress summary frequency. Default is `5s`.
+
+Examples:
+
+```bash
+--progress-interval 10s
+--progress-interval 30s
+--progress-interval 1m
+```
+
+### `--quiet`
+
+Suppress progress and verbose output.
+
 ### `--dry-run`
 
 Show the plan without modifying files.
@@ -81,6 +109,24 @@ Always use dry-run before running on production logs.
 Allow risky plain output on low disk.
 
 Plain output is not recommended during low-disk emergencies because it does not compress the rotated output.
+
+## Runtime output
+
+Default output shows the plan and periodic progress summaries:
+
+```text
+[2026-06-06 10:00:00] progress: starting total=80.00G already_done=0B remaining=80.00G
+[2026-06-06 10:00:05] progress: 12.50% done=10.00G remaining=70.00G speed=200.00M/s elapsed=50s eta=5m50s
+```
+
+Verbose mode adds detailed chunk logs:
+
+```text
+[2026-06-06 10:00:01] verbose: chunk=1 status=read offset=0B target_chunk=512.00M
+[2026-06-06 10:00:02] verbose: chunk=1 status=archive raw=512.00M
+[2026-06-06 10:00:03] verbose: chunk=1 status=punch offset=0B length=512.00M
+[2026-06-06 10:00:03] verbose: chunk=1 status=done raw=512.00M archived=64.00M punched=512.00M ratio=12.50% chunk_time=2s free_before=1.00G free_after=1.44G recovered=+448.00M next_chunk=512.00M
+```
 
 ## What happens during gzip mode
 
