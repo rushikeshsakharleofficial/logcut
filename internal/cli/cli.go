@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/rushikeshsakharleofficial/logcut/internal/compact"
 	"github.com/rushikeshsakharleofficial/logcut/internal/version"
@@ -17,6 +18,8 @@ func Run(args []string) int {
 	fs.Int64Var(&cfg.WorkingPercent, "p", 20, "use only this percent of current free space as working budget")
 	fs.BoolVar(&cfg.DryRun, "dry-run", false, "print plan only")
 	fs.BoolVar(&cfg.Force, "force", false, "allow risky operation")
+	fs.BoolVar(&cfg.Quiet, "quiet", false, "suppress progress logs")
+	fs.DurationVar(&cfg.ProgressInterval, "progress-interval", 5*time.Second, "progress summary interval, example: 5s, 30s, 1m")
 	fs.Usage = usage
 
 	for _, arg := range args {
@@ -36,6 +39,10 @@ func Run(args []string) int {
 	}
 	if cfg.WorkingPercent <= 0 || cfg.WorkingPercent > 80 {
 		fmt.Fprintln(os.Stderr, "Invalid -p value. Use 1 to 80. Recommended: 20")
+		return 2
+	}
+	if cfg.ProgressInterval < 0 {
+		fmt.Fprintln(os.Stderr, "Invalid --progress-interval value")
 		return 2
 	}
 	cfg.Source = pos[0]
@@ -58,13 +65,16 @@ func usage() {
 	fmt.Println("  logcut -g app.log app.rotated.log.gz")
 	fmt.Println("  logcut -g -k 10G app.log app.rotated.log.gz")
 	fmt.Println("  logcut --dry-run -g -k 10G app.log app.rotated.log.gz")
+	fmt.Println("  logcut --progress-interval 10s -g -k 10G app.log app.rotated.log.gz")
 	fmt.Println("  logcut --version")
 	fmt.Println("")
 	fmt.Println("Options:")
-	fmt.Println("  -g              write gzip rotated archive")
-	fmt.Println("  -k <size>       keep latest part in active log, default: 10% of source size")
-	fmt.Println("  -p <percent>    use only this % of current free space as working budget, default: 20")
-	fmt.Println("  --dry-run       print plan only, do not modify files")
-	fmt.Println("  --force         allow risky operation")
-	fmt.Println("  --version       print logcut version")
+	fmt.Println("  -g                         write gzip rotated archive")
+	fmt.Println("  -k <size>                  keep latest part in active log, default: 10% of source size")
+	fmt.Println("  -p <percent>               use only this % of current free space as working budget, default: 20")
+	fmt.Println("  --dry-run                  print plan only, do not modify files")
+	fmt.Println("  --force                    allow risky operation")
+	fmt.Println("  --quiet                    suppress progress logs")
+	fmt.Println("  --progress-interval <dur>  progress summary interval, default: 5s")
+	fmt.Println("  --version                  print logcut version")
 }
