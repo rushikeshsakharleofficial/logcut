@@ -29,6 +29,13 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Read package version
+        id: version
+        run: |
+          VERSION="$(cat VERSION.txt | tr -d '[:space:]')"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building logcut ${VERSION}"
+
       - name: Build binary
         run: make build
 
@@ -38,24 +45,46 @@ jobs:
       - name: Build RPM package with nFPM Go module
         run: make rpm
 
+      - name: Verify package files exist
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          DEB="dist/logcut_${VERSION}_amd64.deb"
+          RPM="dist/logcut-${VERSION}-1.x86_64.rpm"
+          test -s "$DEB" || { echo "Missing DEB package: $DEB"; ls -lah dist || true; exit 1; }
+          test -s "$RPM" || { echo "Missing RPM package: $RPM"; ls -lah dist || true; exit 1; }
+          echo "Found package files:"
+          ls -lah "$DEB" "$RPM"
+
       - name: Generate checksums
         run: make checksums
+
+      - name: Verify checksum includes packages
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          grep -F "logcut_${VERSION}_amd64.deb" dist/SHA256SUMS
+          grep -F "logcut-${VERSION}-1.x86_64.rpm" dist/SHA256SUMS
+          cat dist/SHA256SUMS
 
       - name: Upload package artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: logcut-linux-packages
+          name: logcut-linux-packages-${{ steps.version.outputs.version }}
+          if-no-files-found: error
           path: |
-            dist/*.deb
-            dist/*.rpm
+            dist/logcut_${{ steps.version.outputs.version }}_amd64.deb
+            dist/logcut-${{ steps.version.outputs.version }}-1.x86_64.rpm
             dist/SHA256SUMS
 
       - name: Commit generated packages to repository
         if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
           mkdir -p packages
-          cp dist/*.deb packages/
-          cp dist/*.rpm packages/
+          cp "dist/logcut_${VERSION}_amd64.deb" packages/
+          cp "dist/logcut-${VERSION}-1.x86_64.rpm" packages/
           cp dist/SHA256SUMS packages/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -63,7 +92,7 @@ jobs:
           if git diff --cached --quiet; then
             echo "No package changes to commit"
           else
-            git commit -m "Add generated packages for logcut 1.0.2 [skip ci]"
+            git commit -m "Add generated packages for logcut ${VERSION} [skip ci]"
             git push
           fi
 
@@ -72,6 +101,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/*.deb
-            dist/*.rpm
+            dist/logcut_${{ steps.version.outputs.version }}_amd64.deb
+            dist/logcut-${{ steps.version.outputs.version }}-1.x86_64.rpm
             dist/SHA256SUMS
