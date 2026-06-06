@@ -53,6 +53,40 @@ Enable verbose output. This prints detailed per-step and per-chunk logs,
 including read, archive, punch-hole, chunk duration, compression ratio, free
 space before and after, recovered estimate, and next chunk size.
 .TP
+.B --preflight
+Run safety checks only and do not modify the source log.
+.TP
+.BI --stop-free-above " size"
+Stop safely after the current chunk once free space is above the requested size.
+.TP
+.BI --max-runtime " duration"
+Stop safely after the current chunk once runtime reaches the requested duration.
+.TP
+.BI --rate-limit " size"
+Approximate raw processing rate limit per second, such as 100M.
+.TP
+.BI --sleep-between-chunks " duration"
+Pause after each completed safe chunk, such as 500ms or 2s.
+.TP
+.BI --log-file " path"
+Also write run output to a log file for incident audit records.
+.TP
+.B --json
+Emit JSON events for automation instead of normal human progress logs.
+.TP
+.BI --compress-level " level"
+Set gzip compression level. Use 1 for fastest, 9 for best compression, or -1
+for the Go gzip default.
+.TP
+.BI --verify " mode"
+Set gzip verification mode. Supported values are full and none.
+.TP
+.BI --state-dir " dir"
+Override the state directory.
+.TP
+.BI --lock-dir " dir"
+Override the lock directory.
+.TP
 .BI --progress-interval " duration"
 Set the progress summary interval. Examples: 5s, 30s, 1m. The default is 5s.
 .TP
@@ -67,20 +101,14 @@ Allow risky plain output on low disk. Plain output is not recommended during
 emergencies because it does not compress rotated data.
 .SH EXAMPLES
 .TP
-Plain rotated output:
-.B sudo logcut file1.log file1.rotated.log
+Preflight:
+.B sudo logcut --preflight -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 .TP
-Gzip emergency mode:
-.B sudo logcut -g file1.log file1.rotated.log.gz
+Production emergency mode:
+.B sudo logcut -v --log-file /var/log/logcut-run.log --stop-free-above 20G --max-runtime 30m --rate-limit 100M --sleep-between-chunks 500ms --compress-level 1 -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 .TP
-Recommended emergency mode keeping latest 10 GB active:
-.B sudo logcut -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
-.TP
-Verbose emergency mode:
-.B sudo logcut -v -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
-.TP
-Dry run:
-.B sudo logcut --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+JSON automation mode:
+.B sudo logcut --json -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 .SH OUTPUT
 By default, logcut prints the operation plan and periodic progress summaries.
 Progress includes percentage complete, processed bytes, remaining bytes, speed,
@@ -90,6 +118,11 @@ With
 .B -v,
 logcut also prints detailed chunk logs for read, archive, punch-hole, and final
 chunk status.
+.SH GRACEFUL STOP
+If logcut receives SIGINT or SIGTERM, it records the stop request and exits at a
+safe chunk boundary. It does not intentionally stop halfway through the archive,
+sync, state-save, or punch-hole sequence. The saved state allows a later run to
+resume.
 .SH HOW IT WORKS
 For each chunk, logcut performs the following sequence:
 .IP 1. 4
