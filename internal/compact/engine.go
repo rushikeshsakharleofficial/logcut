@@ -3,8 +3,6 @@ package compact
 import (
 	"bufio"
 	"compress/gzip"
-	"crypto/sha1"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +12,9 @@ import (
 	"time"
 
 	"github.com/rushikeshsakharleofficial/logcut/internal/disk"
+	"github.com/rushikeshsakharleofficial/logcut/internal/event"
 	"github.com/rushikeshsakharleofficial/logcut/internal/human"
+	"github.com/rushikeshsakharleofficial/logcut/internal/job"
 	"github.com/rushikeshsakharleofficial/logcut/internal/lock"
 	"github.com/rushikeshsakharleofficial/logcut/internal/progress"
 	"github.com/rushikeshsakharleofficial/logcut/internal/state"
@@ -28,7 +28,14 @@ type Config struct {
 	Force            bool
 	Quiet            bool
 	Verbose          bool
+	JSON             bool
 	ProgressInterval time.Duration
+	StopFreeAboveRaw string
+	StopFreeAbove    int64
+	MaxRuntime       time.Duration
+	LogFile          string
+	CompressLevel    int
+	VerifyMode       string
 	Source           string
 	Output           string
 	KeepLastBytes    int64
@@ -43,6 +50,8 @@ func DefaultConfig() Config {
 	return Config{
 		WorkingPercent:   20,
 		ProgressInterval: 5 * time.Second,
+		CompressLevel:    gzip.DefaultCompression,
+		VerifyMode:       "full",
 		MinChunk:         8 * human.MiB,
 		MaxChunk:         512 * human.MiB,
 		SampleSize:       32 * human.MiB,
@@ -53,18 +62,41 @@ func DefaultConfig() Config {
 
 func Run(cfg Config) error {
 	startedAt := time.Now()
-	vlogf(cfg, "starting source=%q output=%q gzip=%t dry_run=%t", cfg.Source, cfg.Output, cfg.GzipOutput, cfg.DryRun)
+	out, closeOut, err := outputWriter(cfg)
+	if err != nil {
+		return err
+	}
+	defer closeOut()
+	events := event.Writer{Out: out, Enabled: cfg.JSON}
+	vlogf(out, cfg, "starting source=%q output=%q gzip=%t dry_run=%t", cfg.Source, cfg.Output, cfg.GzipOutput, cfg.DryRun)
+	events.Emit("start", map[string]interface{}{"source": cfg.Source, "output": cfg.Output, "gzip": cfg.GzipOutput})
 
 	absSrc, _ := filepath.Abs(cfg.Source)
 	absOut, _ := filepath.Abs(cfg.Output)
 	cfg.Source = absSrc
 	cfg.Output = absOut
 
+	if cfg.StopFreeAboveRaw != "" {
+		cfg.StopFreeAbove, err = human.ParseSize(cfg.StopFreeAboveRaw)
+		if err != nil {
+			return fmt.Errorf("invalid --stop-free-above value: %w", err)
+		}
+	}
+	if cfg.CompressLevel == 0 {
+		cfg.CompressLevel = gzip.DefaultCompression
+	}
+	if cfg.VerifyMode == "" {
+		cfg.VerifyMode = "full"
+	}
+	if cfg.VerifyMode != "full" && cfg.VerifyMode != "none" {
+		return errors.New("invalid --verify value; use full or none")
+	}
+
 	if cfg.Source == cfg.Output {
 		return errors.New("source and output cannot be the same file")
 	}
 
-	vlogf(cfg, "scanning source log")
+	vlogf(out, cfg, "scanning source log")
 	info, err := disk.FileInfo(cfg.Source)
 	if err != nil {
 		return err
@@ -93,11 +125,10 @@ func Run(cfg Config) error {
 		return errors.New("nothing to compact")
 	}
 
-	stateID := shaForPath(cfg.Source + "|" + cfg.Output)
-	statePath := filepath.Join(cfg.StateDir, stateID+".state")
-	lockPath := filepath.Join(cfg.LockDir, "logcut-"+stateID+".lock")
+	statePath := job.StatePath(cfg.StateDir, cfg.Source, cfg.Output)
+	lockPath := job.LockPath(cfg.LockDir, cfg.Source, cfg.Output)
 
-	vlogf(cfg, "acquiring lock path=%q", lockPath)
+	vlogf(out, cfg, "acquiring lock path=%q", lockPath)
 	lk, err := lock.Acquire(lockPath)
 	if err != nil {
 		return err
@@ -108,7 +139,7 @@ func Run(cfg Config) error {
 	if err := os.MkdirAll(outDir, 0755); err != nil {
 		return err
 	}
-	vlogf(cfg, "checking punch-hole support")
+	vlogf(out, cfg, "checking punch-hole support")
 	if err := disk.TestPunchHole(filepath.Dir(cfg.Source)); err != nil {
 		return fmt.Errorf("filesystem does not support punch-hole on source path or permission denied: %w", err)
 	}
@@ -124,8 +155,8 @@ func Run(cfg Config) error {
 		return err
 	}
 
-	vlogf(cfg, "sampling compression ratio sample_size=%s", human.FormatBytes(cfg.SampleSize))
-	ratio, err := estimateCompressionRatio(src, 0, cfg.SampleSize, cfg.GzipOutput)
+	vlogf(out, cfg, "sampling compression ratio sample_size=%s", human.FormatBytes(cfg.SampleSize))
+	ratio, err := estimateCompressionRatio(src, 0, cfg.SampleSize, cfg.GzipOutput, cfg.CompressLevel)
 	if err != nil {
 		return fmt.Errorf("compression sample failed: %w", err)
 	}
@@ -135,13 +166,15 @@ func Run(cfg Config) error {
 	}
 
 	initialChunk := chooseChunkSize(free, cfg.WorkingPercent, ratio, cfg.MinChunk, cfg.MaxChunk)
-	printPlan(cfg, info, cutoff, free, ratio, initialChunk, statePath)
+	printPlan(out, cfg, info, cutoff, free, ratio, initialChunk, statePath)
+	events.Emit("plan", map[string]interface{}{"source_size": info.Size, "rotate_bytes": cutoff, "free_bytes": free, "initial_chunk": initialChunk, "state_path": statePath})
 
 	if initialChunk <= 0 {
 		return errors.New("not enough free space even with minimum chunk")
 	}
 	if cfg.DryRun {
-		infof(cfg, "dry-run complete; no files changed")
+		infof(out, cfg, "dry-run complete; no files changed")
+		events.Emit("complete", map[string]interface{}{"dry_run": true})
 		return nil
 	}
 
@@ -149,7 +182,7 @@ func Run(cfg Config) error {
 	if old, err := state.Load(statePath); err == nil {
 		if old.Source == cfg.Source && old.Output == cfg.Output && old.Inode == info.Inode && old.Device == info.Device && old.CutoffOffset == cutoff && old.Gzip == cfg.GzipOutput {
 			jobState = old
-			infof(cfg, "resuming from state offset=%s", human.FormatBytes(jobState.LastPunchedOffset))
+			infof(out, cfg, "resuming from state offset=%s", human.FormatBytes(jobState.LastPunchedOffset))
 		} else {
 			return errors.New("existing state file does not match this job; remove it manually if you are sure")
 		}
@@ -160,17 +193,29 @@ func Run(cfg Config) error {
 		return errors.New("invalid state offset")
 	}
 
-	reporter := progress.New(os.Stdout, cutoff, offset, cfg.ProgressInterval, cfg.Quiet, cfg.Verbose)
+	reporter := progress.New(out, cutoff, offset, cfg.ProgressInterval, cfg.Quiet || cfg.JSON, cfg.Verbose)
 	reporter.Start()
 
 	chunkNo := 0
 	lastRatio := ratio
+	stopReason := "completed"
 	for offset < cutoff {
-		chunkNo++
+		if cfg.MaxRuntime > 0 && time.Since(startedAt) >= cfg.MaxRuntime {
+			stopReason = "max-runtime"
+			infof(out, cfg, "safe stop requested: max runtime reached")
+			break
+		}
 		freeBefore, err := disk.FreeBytes(outDir)
 		if err != nil {
 			return err
 		}
+		if cfg.StopFreeAbove > 0 && freeBefore >= cfg.StopFreeAbove {
+			stopReason = "stop-free-above"
+			infof(out, cfg, "safe stop requested: free space %s reached target %s", human.FormatBytes(freeBefore), human.FormatBytes(cfg.StopFreeAbove))
+			break
+		}
+
+		chunkNo++
 		chunkSize := chooseChunkSize(freeBefore, cfg.WorkingPercent, lastRatio, cfg.MinChunk, cfg.MaxChunk)
 		if chunkSize <= 0 {
 			return fmt.Errorf("free space too low for next safe chunk; current free=%s", human.FormatBytes(freeBefore))
@@ -180,7 +225,8 @@ func Run(cfg Config) error {
 		}
 
 		chunkStarted := time.Now()
-		vlogf(cfg, "chunk=%d status=read offset=%s target_chunk=%s", chunkNo, human.FormatBytes(offset), human.FormatBytes(chunkSize))
+		vlogf(out, cfg, "chunk=%d status=read offset=%s target_chunk=%s", chunkNo, human.FormatBytes(offset), human.FormatBytes(chunkSize))
+		events.Emit("chunk_start", map[string]interface{}{"chunk": chunkNo, "offset": offset, "target_chunk": chunkSize})
 		data, end, err := readLineSafeChunk(src, offset, chunkSize, cutoff)
 		if err != nil {
 			if err == io.EOF {
@@ -197,8 +243,8 @@ func Run(cfg Config) error {
 			outBefore = st.Size()
 		}
 
-		vlogf(cfg, "chunk=%d status=archive raw=%s", chunkNo, human.FormatBytes(int64(len(data))))
-		if err := appendData(cfg.Output, data, cfg.GzipOutput); err != nil {
+		vlogf(out, cfg, "chunk=%d status=archive raw=%s", chunkNo, human.FormatBytes(int64(len(data))))
+		if err := appendData(cfg.Output, data, cfg.GzipOutput, cfg.CompressLevel); err != nil {
 			return fmt.Errorf("archive append failed at offset %d: %w", offset, err)
 		}
 		outAfter := int64(0)
@@ -215,7 +261,7 @@ func Run(cfg Config) error {
 			return err
 		}
 
-		vlogf(cfg, "chunk=%d status=punch offset=%s length=%s", chunkNo, human.FormatBytes(offset), human.FormatBytes(end-offset))
+		vlogf(out, cfg, "chunk=%d status=punch offset=%s length=%s", chunkNo, human.FormatBytes(offset), human.FormatBytes(end-offset))
 		if err := disk.PunchHole(src, offset, end-offset); err != nil {
 			return fmt.Errorf("punch-hole failed at offset %d length %d: %w", offset, end-offset, err)
 		}
@@ -241,70 +287,91 @@ func Run(cfg Config) error {
 		offset = end
 		freeAfter, _ := disk.FreeBytes(outDir)
 		nextChunkSize := chooseChunkSize(freeAfter, cfg.WorkingPercent, lastRatio, cfg.MinChunk, cfg.MaxChunk)
-		reporter.Chunk(progress.Snapshot{Chunk: chunkNo, Offset: offset, RawBytes: raw, ArchivedBytes: written, FreeBefore: freeBefore, FreeAfter: freeAfter, NextChunkSize: nextChunkSize, Ratio: lastRatio, ChunkDuration: time.Since(chunkStarted)})
+		duration := time.Since(chunkStarted)
+		reporter.Chunk(progress.Snapshot{Chunk: chunkNo, Offset: offset, RawBytes: raw, ArchivedBytes: written, FreeBefore: freeBefore, FreeAfter: freeAfter, NextChunkSize: nextChunkSize, Ratio: lastRatio, ChunkDuration: duration})
+		events.Emit("chunk_done", map[string]interface{}{"chunk": chunkNo, "offset": offset, "raw_bytes": raw, "archived_bytes": written, "free_before": freeBefore, "free_after": freeAfter, "duration_ms": duration.Milliseconds(), "ratio": lastRatio})
 	}
 
-	if cfg.GzipOutput {
-		vlogf(cfg, "verifying gzip archive path=%q", cfg.Output)
+	if cfg.GzipOutput && cfg.VerifyMode == "full" {
+		vlogf(out, cfg, "verifying gzip archive path=%q", cfg.Output)
 		if err := verifyGzip(cfg.Output); err != nil {
 			return fmt.Errorf("gzip verification failed: %w", err)
 		}
+	} else if cfg.GzipOutput && cfg.VerifyMode == "none" {
+		infof(out, cfg, "gzip verification skipped (--verify none)")
 	}
 
 	finalInfo, _ := disk.FileInfo(cfg.Source)
 	reporter.Complete(offset)
-	fmt.Println("Complete.")
-	fmt.Println("  Active log apparent size:", human.FormatBytes(finalInfo.Size))
-	fmt.Println("  Active log real usage:   ", human.FormatBytes(finalInfo.BlocksUsed))
-	if st, err := os.Stat(cfg.Output); err == nil {
-		fmt.Println("  Rotated output size:     ", human.FormatBytes(st.Size()))
+	if !cfg.Quiet && !cfg.JSON {
+		fmt.Fprintln(out, "Complete.")
+		fmt.Fprintln(out, "  Stop reason:              ", stopReason)
+		fmt.Fprintln(out, "  Active log apparent size:", human.FormatBytes(finalInfo.Size))
+		fmt.Fprintln(out, "  Active log real usage:   ", human.FormatBytes(finalInfo.BlocksUsed))
+		if st, err := os.Stat(cfg.Output); err == nil {
+			fmt.Fprintln(out, "  Rotated output size:     ", human.FormatBytes(st.Size()))
+		}
+		fmt.Fprintln(out, "  Total runtime:           ", time.Since(startedAt).Round(time.Second))
+		fmt.Fprintln(out, "  Check real usage with: du -h", cfg.Source)
 	}
-	fmt.Println("  Total runtime:           ", time.Since(startedAt).Round(time.Second))
-	fmt.Println("  Check real usage with: du -h", cfg.Source)
+	events.Emit("complete", map[string]interface{}{"stop_reason": stopReason, "offset": offset, "runtime_ms": time.Since(startedAt).Milliseconds(), "active_real_usage": finalInfo.BlocksUsed})
 	return nil
 }
 
-func printPlan(cfg Config, info disk.FileStats, cutoff int64, free int64, ratio float64, initialChunk int64, statePath string) {
-	if cfg.Quiet {
+func outputWriter(cfg Config) (io.Writer, func(), error) {
+	if cfg.LogFile == "" {
+		return os.Stdout, func() {}, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(cfg.LogFile), 0755); err != nil {
+		return nil, nil, err
+	}
+	f, err := os.OpenFile(cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		return nil, nil, err
+	}
+	return io.MultiWriter(os.Stdout, f), func() { _ = f.Close() }, nil
+}
+
+func printPlan(w io.Writer, cfg Config, info disk.FileStats, cutoff int64, free int64, ratio float64, initialChunk int64, statePath string) {
+	if cfg.Quiet || cfg.JSON {
 		return
 	}
-	fmt.Println("Plan:")
-	fmt.Println("  Source:           ", cfg.Source)
-	fmt.Println("  Output:           ", cfg.Output)
-	fmt.Println("  Gzip output:      ", cfg.GzipOutput)
-	fmt.Println("  Verbose:          ", cfg.Verbose)
-	fmt.Println("  Log apparent size:", human.FormatBytes(info.Size))
-	fmt.Println("  Log real usage:   ", human.FormatBytes(info.BlocksUsed))
-	fmt.Println("  Keep latest:      ", human.FormatBytes(cfg.KeepLastBytes))
-	fmt.Println("  Rotate old range: ", human.FormatBytes(cutoff))
-	fmt.Println("  Free space:       ", human.FormatBytes(free))
-	fmt.Println("  Work budget:      ", fmt.Sprintf("%d%% of free space", cfg.WorkingPercent))
-	fmt.Println("  Compression ratio:", fmt.Sprintf("%.2f%%", ratio*100))
-	fmt.Println("  Initial chunk:    ", human.FormatBytes(initialChunk))
-	fmt.Println("  Progress interval:", cfg.ProgressInterval)
-	fmt.Println("  State file:       ", statePath)
+	fmt.Fprintln(w, "Plan:")
+	fmt.Fprintln(w, "  Source:           ", cfg.Source)
+	fmt.Fprintln(w, "  Output:           ", cfg.Output)
+	fmt.Fprintln(w, "  Gzip output:      ", cfg.GzipOutput)
+	fmt.Fprintln(w, "  Verbose:          ", cfg.Verbose)
+	fmt.Fprintln(w, "  Log apparent size:", human.FormatBytes(info.Size))
+	fmt.Fprintln(w, "  Log real usage:   ", human.FormatBytes(info.BlocksUsed))
+	fmt.Fprintln(w, "  Keep latest:      ", human.FormatBytes(cfg.KeepLastBytes))
+	fmt.Fprintln(w, "  Rotate old range: ", human.FormatBytes(cutoff))
+	fmt.Fprintln(w, "  Free space:       ", human.FormatBytes(free))
+	fmt.Fprintln(w, "  Work budget:      ", fmt.Sprintf("%d%% of free space", cfg.WorkingPercent))
+	fmt.Fprintln(w, "  Compression ratio:", fmt.Sprintf("%.2f%%", ratio*100))
+	fmt.Fprintln(w, "  Initial chunk:    ", human.FormatBytes(initialChunk))
+	fmt.Fprintln(w, "  Stop free above:  ", human.FormatBytes(cfg.StopFreeAbove))
+	fmt.Fprintln(w, "  Max runtime:      ", cfg.MaxRuntime)
+	fmt.Fprintln(w, "  Compress level:   ", cfg.CompressLevel)
+	fmt.Fprintln(w, "  Verify mode:      ", cfg.VerifyMode)
+	fmt.Fprintln(w, "  Progress interval:", cfg.ProgressInterval)
+	fmt.Fprintln(w, "  State file:       ", statePath)
 }
 
-func infof(cfg Config, format string, args ...interface{}) {
-	if cfg.Quiet {
+func infof(w io.Writer, cfg Config, format string, args ...interface{}) {
+	if cfg.Quiet || cfg.JSON {
 		return
 	}
-	fmt.Printf("[%s] "+format+"\n", append([]interface{}{time.Now().Format("2006-01-02 15:04:05")}, args...)...)
+	fmt.Fprintf(w, "[%s] "+format+"\n", append([]interface{}{time.Now().Format("2006-01-02 15:04:05")}, args...)...)
 }
 
-func vlogf(cfg Config, format string, args ...interface{}) {
-	if cfg.Quiet || !cfg.Verbose {
+func vlogf(w io.Writer, cfg Config, format string, args ...interface{}) {
+	if cfg.Quiet || !cfg.Verbose || cfg.JSON {
 		return
 	}
-	fmt.Printf("[%s] verbose: "+format+"\n", append([]interface{}{time.Now().Format("2006-01-02 15:04:05")}, args...)...)
+	fmt.Fprintf(w, "[%s] verbose: "+format+"\n", append([]interface{}{time.Now().Format("2006-01-02 15:04:05")}, args...)...)
 }
 
-func shaForPath(p string) string {
-	h := sha1.Sum([]byte(p))
-	return hex.EncodeToString(h[:])[:16]
-}
-
-func estimateCompressionRatio(src *os.File, offset, max int64, gzipEnabled bool) (float64, error) {
+func estimateCompressionRatio(src *os.File, offset, max int64, gzipEnabled bool, level int) (float64, error) {
 	if !gzipEnabled {
 		return 1.0, nil
 	}
@@ -332,7 +399,10 @@ func estimateCompressionRatio(src *os.File, offset, max int64, gzipEnabled bool)
 			}
 		}
 	}()
-	gw := gzip.NewWriter(pw)
+	gw, err := gzip.NewWriterLevel(pw, level)
+	if err != nil {
+		return 0, err
+	}
 	raw, err := io.Copy(gw, lr)
 	if err != nil {
 		gzErr = err
@@ -423,13 +493,17 @@ func readLineSafeChunk(src *os.File, start, target, cutoff int64) ([]byte, int64
 	return out, pos, nil
 }
 
-func appendData(outputPath string, data []byte, gzipEnabled bool) error {
+func appendData(outputPath string, data []byte, gzipEnabled bool, level int) error {
 	out, err := os.OpenFile(outputPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return err
 	}
 	if gzipEnabled {
-		gw := gzip.NewWriter(out)
+		gw, err := gzip.NewWriterLevel(out, level)
+		if err != nil {
+			_ = out.Close()
+			return err
+		}
 		if _, err := gw.Write(data); err != nil {
 			_ = gw.Close()
 			_ = out.Close()
