@@ -53,7 +53,9 @@ jobs:
           cp dist/SHA256SUMS packages/SHA256SUMS
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add packages
+          git add packages/SHA256SUMS
+          git add -f "packages/logcut_${VERSION}_amd64.deb"
+          git add -f "packages/logcut-${VERSION}-1.x86_64.rpm"
           if git diff --cached --quiet; then
             echo "No package changes"
           else
