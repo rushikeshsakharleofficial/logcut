@@ -19,6 +19,9 @@ It streams old log data from the active file, writes that data into a rotated ou
 - No application restart required.
 - Keeps the same active log file path and inode.
 - Processes old data chunk by chunk.
+- Auto-throttle is enabled by default.
+- Inbuilt adaptive control reads system load, memory availability, and disk free space directly from Go.
+- Automatically adjusts rate limit, sleep between chunks, max chunk size, and gzip level.
 - Uses only a safe percentage of current free disk space for each chunk; default is 20%.
 - Automatically recalculates chunk size while running.
 - Optional gzip output using one final archive file.
@@ -28,7 +31,7 @@ It streams old log data from the active file, writes that data into a rotated ou
 - Handles SIGINT/SIGTERM by stopping safely before the next chunk.
 - Supports `--preflight` safety checks before modifying logs.
 - Supports `--stop-free-above` and `--max-runtime` for safe incident stops.
-- Supports `--rate-limit` and `--sleep-between-chunks` to reduce I/O pressure.
+- Manual `--rate-limit` and `--sleep-between-chunks` still override auto mode when needed.
 - Supports `--log-file` for audit logs.
 - Supports `--json` event output for automation.
 - Supports `--compress-level` and `--verify full|none`.
@@ -46,16 +49,24 @@ Preflight first:
 sudo logcut --preflight -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 ```
 
-Recommended production emergency usage:
+Recommended production emergency usage with default auto-throttle:
 
 ```bash
 sudo logcut -v \
   --log-file /var/log/logcut-run.log \
   --stop-free-above 20G \
   --max-runtime 30m \
-  --rate-limit 100M \
-  --sleep-between-chunks 500ms \
-  --compress-level 1 \
+  -g -k 10G \
+  /var/log/app/debug.log \
+  /var/log/app/debug.log.rotated.gz
+```
+
+Manual override example when you want a fixed limit:
+
+```bash
+sudo logcut -v \
+  --rate-limit 25M \
+  --sleep-between-chunks 2s \
   -g -k 10G \
   /var/log/app/debug.log \
   /var/log/app/debug.log.rotated.gz
@@ -81,13 +92,32 @@ Show installed version:
 logcut --version
 ```
 
+## Auto-throttle behavior
+
+Auto mode is enabled by default. It is fully inbuilt and does not call external tools such as `iostat`, `vmstat`, `ionice`, or shell commands.
+
+On each run, and again between chunks, logcut evaluates:
+
+- current filesystem free space
+- system load from Linux proc data
+- available memory from Linux proc data
+
+It then adjusts:
+
+- raw processing rate limit
+- sleep between chunks
+- maximum chunk size
+- gzip compression level
+
+Manual flags still win. If you pass `--rate-limit` or `--sleep-between-chunks`, those values override the auto-selected values.
+
 ## Runtime output
 
 Default output shows the plan and periodic progress summaries:
 
 ```text
-[2026-06-06 10:00:00] progress: starting total=80.00G already_done=0B remaining=80.00G
-[2026-06-06 10:00:05] progress: 12.50% done=10.00G remaining=70.00G speed=200.00M/s elapsed=50s eta=5m50s
+[2026-06-06 10:00:00] auto-throttle: pressure=high load1=3.20 cpus=2 mem_avail=14.0% free=1.50G rate=25.00M/s sleep=2s max_chunk=64.00M reason=high disk, load, or memory pressure
+[2026-06-06 10:00:05] progress: 12.50% done=10.00G remaining=70.00G speed=25.00M/s elapsed=6m40s eta=46m40s
 ```
 
 Use `-v` when you need detailed logs for each internal step.
@@ -96,18 +126,6 @@ Use `--progress-interval` to control summary frequency:
 
 ```bash
 sudo logcut --progress-interval 10s -g -k 10G app.log app.rotated.log.gz
-```
-
-Use `--rate-limit` to slow raw processing and reduce I/O pressure:
-
-```bash
-sudo logcut --rate-limit 100M -g -k 10G app.log app.rotated.log.gz
-```
-
-Use `--sleep-between-chunks` to pause after every safe chunk:
-
-```bash
-sudo logcut --sleep-between-chunks 500ms -g -k 10G app.log app.rotated.log.gz
 ```
 
 Use `--quiet` to suppress progress/log output.
@@ -156,29 +174,11 @@ At the end:
 - `debug.log.rotated.gz` contains the older rotated logs.
 - `debug.log` may still show a large apparent size with `ls -lh`, but real disk usage should be checked with `du -h`.
 
-## Auto chunk calculation
-
-By default, `logcut` uses only 20% of currently available free disk space as the working budget for the next chunk. The other 80% is treated as a protected buffer for application log growth, system logs, metadata updates, and sudden write spikes.
-
-The working budget is recalculated during the run. If free space improves, chunks can become larger. If free space drops, chunks become smaller or the tool stops safely.
-
-Override the percentage with `-p`:
-
-```bash
-sudo logcut -g -k 10G -p 15 /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
-```
-
 ## Important filesystem requirement
 
 `logcut` requires Linux hole punching support. It is expected to work on common Linux filesystems such as XFS and ext4 when mounted normally.
 
 See [Filesystem support](docs/filesystem-support.md).
-
-## Versioning
-
-The source of truth is `VERSION.txt`.
-
-On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments the patch version automatically. The bump updates runtime version, package metadata, man page, and build defaults.
 
 ## Options
 
@@ -190,8 +190,8 @@ On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments
 --preflight                run safety checks only
 --stop-free-above <size>   stop safely once free space is above size
 --max-runtime <duration>   stop safely once runtime is reached
---rate-limit <size>        approximate raw processing rate limit per second
---sleep-between-chunks <d> pause after every safe chunk
+--rate-limit <size>        manual override for raw processing rate limit per second
+--sleep-between-chunks <d> manual override for pause after every safe chunk
 --log-file <path>          also write run output to file
 --json                     emit JSON events
 --compress-level <level>   gzip level: -1 or 1..9
@@ -203,35 +203,6 @@ On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments
 --dry-run                  print plan only, do not modify files
 --force                    allow risky plain output on low disk
 --version                  print logcut version
-```
-
-## Repository layout
-
-```text
-cmd/logcut/main.go                binary entry point
-cmd/devtool/main.go               Go-based build/install/package helper
-cmd/versionbump/main.go           auto version bump helper
-internal/cli/                     CLI parsing and validation
-internal/compact/                 compaction engine
-internal/control/                 SIGINT/SIGTERM graceful stop handling
-internal/disk/                    statfs and punch-hole helpers
-internal/event/                   JSON event writer
-internal/human/                   size parsing and formatting
-internal/job/                     job ID/state path helpers
-internal/lock/                    lock handling
-internal/preflight/               preflight safety checks
-internal/progress/                progress and verbose output reporter
-internal/state/                   resume state file handling
-internal/version/                 runtime version support
-man/logcut.8                      Unix manual page for man logcut
-configure                         creates config.mk for make install
-Makefile                          thin wrapper around cmd/devtool
-VERSION.txt                       source of truth for auto patch version
-nfpm.yaml                         package metadata for deb/rpm generation
-docs/architecture.md              architecture details
-docs/runbook.md                   emergency runbook
-docs/filesystem-support.md        filesystem notes
-examples/emergency.md             emergency usage example
 ```
 
 ## Safety notes
