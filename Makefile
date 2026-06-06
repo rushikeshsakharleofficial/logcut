@@ -5,7 +5,8 @@
 # is implemented in cmd/devtool using Go APIs and Go modules.
 
 GO ?= go
-DEVTOOL := $(GO) run ./cmd/devtool
+SRC ?= .
+DEVTOOL := SRC=$(SRC) $(GO) run ./cmd/devtool
 
 .PHONY: all modulecheck build install uninstall reinstall clean test dry-run package deb rpm tar dist checksums help
 
