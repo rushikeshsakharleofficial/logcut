@@ -10,6 +10,7 @@ It streams old log data from the active file, writes that data into a rotated ou
 - [Installation guide](INSTALL.md)
 - [Architecture](docs/architecture.md)
 - [Emergency example](examples/emergency.md)
+- Unix man page: `man logcut`
 
 ## Why logcut exists
 
@@ -42,6 +43,7 @@ Normal rotation can fail during disk emergencies:
 - Frees old blocks using punch-hole after safe archive write.
 - Uses state and lock files for safer resume behavior.
 - Supports dry-run planning.
+- Installs a Unix manual page at `/usr/share/man/man8/logcut.8`.
 
 ## Basic usage
 
@@ -67,6 +69,12 @@ Dry run first:
 
 ```bash
 sudo logcut --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+```
+
+After installation, read the manual:
+
+```bash
+man logcut
 ```
 
 ## How it works
@@ -203,6 +211,7 @@ go run ./cmd/devtool checksums
 logcut.go                         main runtime source
 cmd/devtool/main.go               Go-based build/install/package helper
 cmd/modulecheck/main.go           small Go module bootstrap helper
+man/logcut.8                      Unix manual page for man logcut
 MANUAL.md                         user manual
 INSTALL.md                        installation and packaging manual
 go.mod                            Go module file
