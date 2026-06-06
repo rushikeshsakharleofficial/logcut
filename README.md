@@ -25,8 +25,10 @@ It streams old log data from the active file, writes that data into a rotated ou
 - Cuts only on newline boundaries where possible.
 - Frees old blocks using punch-hole after safe archive write.
 - Uses state and lock files for safer resume behavior.
+- Handles SIGINT/SIGTERM by stopping safely before the next chunk.
 - Supports `--preflight` safety checks before modifying logs.
 - Supports `--stop-free-above` and `--max-runtime` for safe incident stops.
+- Supports `--rate-limit` and `--sleep-between-chunks` to reduce I/O pressure.
 - Supports `--log-file` for audit logs.
 - Supports `--json` event output for automation.
 - Supports `--compress-level` and `--verify full|none`.
@@ -44,13 +46,15 @@ Preflight first:
 sudo logcut --preflight -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 ```
 
-Recommended emergency usage:
+Recommended production emergency usage:
 
 ```bash
 sudo logcut -v \
   --log-file /var/log/logcut-run.log \
   --stop-free-above 20G \
   --max-runtime 30m \
+  --rate-limit 100M \
+  --sleep-between-chunks 500ms \
   --compress-level 1 \
   -g -k 10G \
   /var/log/app/debug.log \
@@ -94,7 +98,23 @@ Use `--progress-interval` to control summary frequency:
 sudo logcut --progress-interval 10s -g -k 10G app.log app.rotated.log.gz
 ```
 
+Use `--rate-limit` to slow raw processing and reduce I/O pressure:
+
+```bash
+sudo logcut --rate-limit 100M -g -k 10G app.log app.rotated.log.gz
+```
+
+Use `--sleep-between-chunks` to pause after every safe chunk:
+
+```bash
+sudo logcut --sleep-between-chunks 500ms -g -k 10G app.log app.rotated.log.gz
+```
+
 Use `--quiet` to suppress progress/log output.
+
+## Graceful stop behavior
+
+If `logcut` receives SIGINT or SIGTERM, it does not interrupt a chunk in the middle of archive/write/punch state transitions. It records the signal request, finishes the current safe chunk boundary, saves state, and exits with a stop reason. The next run can resume from the saved state.
 
 ## Configure and build
 
@@ -170,6 +190,8 @@ On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments
 --preflight                run safety checks only
 --stop-free-above <size>   stop safely once free space is above size
 --max-runtime <duration>   stop safely once runtime is reached
+--rate-limit <size>        approximate raw processing rate limit per second
+--sleep-between-chunks <d> pause after every safe chunk
 --log-file <path>          also write run output to file
 --json                     emit JSON events
 --compress-level <level>   gzip level: -1 or 1..9
@@ -191,6 +213,7 @@ cmd/devtool/main.go               Go-based build/install/package helper
 cmd/versionbump/main.go           auto version bump helper
 internal/cli/                     CLI parsing and validation
 internal/compact/                 compaction engine
+internal/control/                 SIGINT/SIGTERM graceful stop handling
 internal/disk/                    statfs and punch-hole helpers
 internal/event/                   JSON event writer
 internal/human/                   size parsing and formatting
