@@ -20,16 +20,16 @@ const (
 )
 
 type config struct {
-	Version     string
-	Prefix      string
-	DestDir     string
-	Goos        string
-	Goarch      string
-	CgoEnabled  string
-	NFPMModule  string
-	BuildDir    string
-	DistDir     string
-	Source      string
+	Version    string
+	Prefix     string
+	DestDir    string
+	Goos       string
+	Goarch     string
+	CgoEnabled string
+	NFPMModule string
+	BuildDir   string
+	DistDir    string
+	Source     string
 }
 
 func getenv(key, fallback string) string {
@@ -42,7 +42,7 @@ func getenv(key, fallback string) string {
 
 func loadConfig() config {
 	return config{
-		Version:    getenv("VERSION", "1.0.0"),
+		Version:    getenv("VERSION", "1.0.2"),
 		Prefix:     getenv("PREFIX", "/usr/local"),
 		DestDir:    getenv("DESTDIR", ""),
 		Goos:       getenv("GOOS", "linux"),
@@ -95,7 +95,6 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
-
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "ERROR:", err)
 		os.Exit(1)
@@ -111,8 +110,8 @@ func usage() {
 	fmt.Println("Targets:")
 	fmt.Println("  modulecheck   Create go.mod if missing")
 	fmt.Println("  build         Build logcut")
-	fmt.Println("  install       Install binary and directories")
-	fmt.Println("  uninstall     Remove installed binary only")
+	fmt.Println("  install       Install binary, directories, docs, and man page")
+	fmt.Println("  uninstall     Remove installed binary and man page only")
 	fmt.Println("  clean         Remove build/dist directories")
 	fmt.Println("  deb           Build .deb using the nFPM Go module")
 	fmt.Println("  rpm           Build .rpm using the nFPM Go module")
@@ -178,21 +177,34 @@ func install(cfg config) error {
 	if err := copyFile(filepath.Join(cfg.BuildDir, appName), filepath.Join(bindir, appName), 0755); err != nil {
 		return err
 	}
-	for _, dir := range []string{"/etc/logcut", "/var/lib/logcut", "/var/log", "/var/lock"} {
+	for _, dir := range []string{"/etc/logcut", "/var/lib/logcut", "/var/log", "/var/lock", "/usr/share/man/man8", "/usr/share/doc/logcut", "/usr/share/doc/logcut/examples"} {
 		if err := os.MkdirAll(filepath.Join(cfg.DestDir, dir), 0755); err != nil {
 			return err
 		}
 	}
+	optionalCopy("man/logcut.8", filepath.Join(cfg.DestDir, "/usr/share/man/man8/logcut.8"), 0644)
+	optionalCopy("README.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/README.md"), 0644)
+	optionalCopy("MANUAL.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/MANUAL.md"), 0644)
+	optionalCopy("INSTALL.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/INSTALL.md"), 0644)
+	optionalCopy("LICENSE", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/LICENSE"), 0644)
+	optionalCopy("docs/architecture.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/architecture.md"), 0644)
+	optionalCopy("examples/emergency.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/examples/emergency.md"), 0644)
 	fmt.Println("Installed", filepath.Join(bindir, appName))
+	fmt.Println("Man page installed to", filepath.Join(cfg.DestDir, "/usr/share/man/man8/logcut.8"))
 	return nil
 }
 
 func uninstall(cfg config) error {
-	path := filepath.Join(cfg.DestDir, cfg.Prefix, "bin", appName)
-	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-		return err
+	paths := []string{
+		filepath.Join(cfg.DestDir, cfg.Prefix, "bin", appName),
+		filepath.Join(cfg.DestDir, "/usr/share/man/man8/logcut.8"),
 	}
-	fmt.Println("Removed", path)
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		fmt.Println("Removed", path)
+	}
 	fmt.Println("Keeping /etc/logcut, /var/lib/logcut, and logs for safety.")
 	return nil
 }
@@ -229,7 +241,7 @@ func sourceTarball(cfg config) error {
 	if err := os.MkdirAll(base, 0755); err != nil {
 		return err
 	}
-	files := []string{"logcut.go", "go.mod", "Makefile", "nfpm.yaml", "README.md", "INSTALL.md", "LICENSE"}
+	files := []string{"logcut.go", "go.mod", "Makefile", "nfpm.yaml", "README.md", "INSTALL.md", "MANUAL.md", "LICENSE", "man/logcut.8", "docs/architecture.md", "examples/emergency.md", ".github/workflows/build-packages.yml"}
 	for _, f := range files {
 		if _, err := os.Stat(f); err == nil {
 			if err := copyFile(f, filepath.Join(base, f), 0644); err != nil {
@@ -308,6 +320,14 @@ func checksums(cfg config) error {
 	}
 	fmt.Println("Created", filepath.Join(cfg.DistDir, "SHA256SUMS"))
 	return nil
+}
+
+func optionalCopy(src, dst string, mode os.FileMode) {
+	if _, err := os.Stat(src); err == nil {
+		if err := copyFile(src, dst, mode); err != nil {
+			fmt.Fprintln(os.Stderr, "warning:", err)
+		}
+	}
 }
 
 func copyFile(src, dst string, mode os.FileMode) error {
