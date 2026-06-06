@@ -19,15 +19,15 @@ type Reporter struct {
 }
 
 type Snapshot struct {
-	Chunk          int
-	Offset         int64
-	RawBytes       int64
-	ArchivedBytes  int64
-	FreeBefore     int64
-	FreeAfter      int64
-	NextChunkSize  int64
-	Ratio          float64
-	ChunkDuration  time.Duration
+	Chunk         int
+	Offset        int64
+	RawBytes      int64
+	ArchivedBytes int64
+	FreeBefore    int64
+	FreeAfter     int64
+	NextChunkSize int64
+	Ratio         float64
+	ChunkDuration time.Duration
 }
 
 func New(out io.Writer, total int64, startOffset int64, interval time.Duration, quiet bool) *Reporter {
@@ -35,15 +35,7 @@ func New(out io.Writer, total int64, startOffset int64, interval time.Duration, 
 		interval = 5 * time.Second
 	}
 	now := time.Now()
-	return &Reporter{
-		Out:         out,
-		Total:       total,
-		StartOffset: startOffset,
-		StartedAt:   now,
-		LastPrinted: now,
-		Interval:    interval,
-		Quiet:       quiet,
-	}
+	return &Reporter{Out: out, Total: total, StartOffset: startOffset, StartedAt: now, LastPrinted: now, Interval: interval, Quiet: quiet}
 }
 
 func (r *Reporter) Start() {
@@ -60,12 +52,10 @@ func (r *Reporter) Chunk(s Snapshot) {
 	}
 	now := time.Now()
 	shouldPrintSummary := now.Sub(r.LastPrinted) >= r.Interval || s.Offset >= r.Total
-
 	recovered := s.FreeAfter - s.FreeBefore
 	fmt.Fprintf(r.Out, "[%s] chunk=%d status=done raw=%s archived=%s punched=%s ratio=%.2f%% chunk_time=%s free_before=%s free_after=%s recovered=%s next_chunk=%s\n",
 		timestamp(), s.Chunk, human.FormatBytes(s.RawBytes), human.FormatBytes(s.ArchivedBytes), human.FormatBytes(s.RawBytes), s.Ratio*100,
 		s.ChunkDuration.Round(time.Millisecond), human.FormatBytes(s.FreeBefore), human.FormatBytes(s.FreeAfter), signedBytes(recovered), human.FormatBytes(s.NextChunkSize))
-
 	if shouldPrintSummary {
 		r.Summary(s.Offset)
 		r.LastPrinted = now
@@ -93,7 +83,7 @@ func (r *Reporter) Summary(offset int64) {
 	}
 	eta := "unknown"
 	if speed > 0 && remaining > 0 {
-		eta = time.Duration(float64(remaining)/speed) .Round(time.Second).String()
+		eta = time.Duration(float64(remaining) / speed * float64(time.Second)).Round(time.Second).String()
 	} else if remaining == 0 {
 		eta = "0s"
 	}
