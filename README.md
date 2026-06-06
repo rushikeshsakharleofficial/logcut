@@ -9,29 +9,10 @@ It streams old log data from the active file, writes that data into a rotated ou
 - [Manual](MANUAL.md)
 - [Installation guide](INSTALL.md)
 - [Architecture](docs/architecture.md)
+- [Emergency runbook](docs/runbook.md)
+- [Filesystem support](docs/filesystem-support.md)
 - [Emergency example](examples/emergency.md)
 - Unix man page: `man logcut`
-
-## Why logcut exists
-
-Normal rotation can fail during disk emergencies:
-
-- `cp` and `split` need duplicate space.
-- Compressing a full file at once needs output space before freeing the original.
-- `mv` does not help if the application keeps writing to the old inode.
-- Application restart or log reopen may not be allowed.
-
-`logcut` is designed for this exact case: preserve old log data, keep the application writing to the same file, and recover disk space gradually.
-
-## Design principles
-
-- Runtime operations are implemented with Go APIs and Go syscalls.
-- The application does not shell out to `fallocate`, `cp`, `mv`, `split`, or `gzip`.
-- Runtime code is split into small packages under `internal/`.
-- `cmd/logcut` contains only the binary entry point.
-- Package building uses the `nFPM` Go module directly through `go run`.
-- If `go.mod` is missing, the Go dev tool can create it directly using Go file operations.
-- The Makefile is only a thin wrapper around the Go-based developer tool.
 
 ## Key features
 
@@ -44,54 +25,56 @@ Normal rotation can fail during disk emergencies:
 - Cuts only on newline boundaries where possible.
 - Frees old blocks using punch-hole after safe archive write.
 - Uses state and lock files for safer resume behavior.
+- Supports `--preflight` safety checks before modifying logs.
+- Supports `--stop-free-above` and `--max-runtime` for safe incident stops.
+- Supports `--log-file` for audit logs.
+- Supports `--json` event output for automation.
+- Supports `--compress-level` and `--verify full|none`.
+- Supports `status`, `list-state`, and safe `clean-state` state management.
 - Shows progress summaries with percentage, speed, elapsed time, ETA, and remaining bytes.
 - Supports `-v` verbose mode for per-step and per-chunk logs.
-- Supports dry-run planning.
 - Installs a Unix manual page at `/usr/share/man/man8/logcut.8`.
 - Supports `logcut --version`.
 
 ## Basic usage
 
-Plain rotated output:
+Preflight first:
 
 ```bash
-sudo logcut file1.log file1.rotated.log
-```
-
-Gzip emergency mode:
-
-```bash
-sudo logcut -g file1.log file1.rotated.log.gz
+sudo logcut --preflight -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 ```
 
 Recommended emergency usage:
 
 ```bash
-sudo logcut -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+sudo logcut -v \
+  --log-file /var/log/logcut-run.log \
+  --stop-free-above 20G \
+  --max-runtime 30m \
+  --compress-level 1 \
+  -g -k 10G \
+  /var/log/app/debug.log \
+  /var/log/app/debug.log.rotated.gz
 ```
 
-Verbose emergency usage:
+JSON automation output:
 
 ```bash
-sudo logcut -v -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+sudo logcut --json -g -k 10G app.log app.rotated.log.gz
 ```
 
-Dry run first:
+State inspection:
 
 ```bash
-sudo logcut --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+sudo logcut status /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+sudo logcut list-state
+sudo logcut clean-state /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 ```
 
 Show installed version:
 
 ```bash
 logcut --version
-```
-
-After installation, read the manual:
-
-```bash
-man logcut
 ```
 
 ## Runtime output
@@ -103,14 +86,7 @@ Default output shows the plan and periodic progress summaries:
 [2026-06-06 10:00:05] progress: 12.50% done=10.00G remaining=70.00G speed=200.00M/s elapsed=50s eta=5m50s
 ```
 
-Use `-v` when you need detailed logs for each internal step:
-
-```text
-[2026-06-06 10:00:01] verbose: chunk=1 status=read offset=0B target_chunk=512.00M
-[2026-06-06 10:00:02] verbose: chunk=1 status=archive raw=512.00M
-[2026-06-06 10:00:03] verbose: chunk=1 status=punch offset=0B length=512.00M
-[2026-06-06 10:00:03] verbose: chunk=1 status=done raw=512.00M archived=64.00M punched=512.00M ratio=12.50% chunk_time=2s free_before=1.00G free_after=1.44G recovered=+448.00M next_chunk=512.00M
-```
+Use `-v` when you need detailed logs for each internal step.
 
 Use `--progress-interval` to control summary frequency:
 
@@ -176,34 +152,13 @@ sudo logcut -g -k 10G -p 15 /var/log/app/debug.log /var/log/app/debug.log.rotate
 
 `logcut` requires Linux hole punching support. It is expected to work on common Linux filesystems such as XFS and ext4 when mounted normally.
 
-Check filesystem type:
-
-```bash
-df -T /var/log/app
-```
-
-Check actual disk usage after compaction:
-
-```bash
-du -h /var/log/app/debug.log
-ls -lh /var/log/app/debug.log
-```
-
-`ls` shows apparent size. `du` shows real allocated disk usage.
+See [Filesystem support](docs/filesystem-support.md).
 
 ## Versioning
 
 The source of truth is `VERSION.txt`.
 
-On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments the patch version automatically. The bump updates:
-
-- `VERSION.txt`
-- `internal/version/version.go`, used by `logcut --version`
-- `nfpm.yaml`, used by `.deb` and `.rpm`
-- `man/logcut.8`, used by `man logcut`
-- `cmd/devtool/main.go`, used by `make`, `make deb`, and `make rpm`
-
-The package workflow then builds packages from the bumped version.
+On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments the patch version automatically. The bump updates runtime version, package metadata, man page, and build defaults.
 
 ## Options
 
@@ -212,6 +167,15 @@ The package workflow then builds packages from the bumped version.
 -k <size>                  keep latest part in active log, default: 10% of source size
 -p <percent>               use only this % of current free space as working budget, default: 20
 -v                         verbose logs with per-step and per-chunk details
+--preflight                run safety checks only
+--stop-free-above <size>   stop safely once free space is above size
+--max-runtime <duration>   stop safely once runtime is reached
+--log-file <path>          also write run output to file
+--json                     emit JSON events
+--compress-level <level>   gzip level: -1 or 1..9
+--verify <mode>            gzip verification: full or none
+--state-dir <dir>          state directory
+--lock-dir <dir>           lock directory
 --progress-interval <dur>  progress summary interval, default: 5s
 --quiet                    suppress progress/log output
 --dry-run                  print plan only, do not modify files
@@ -228,8 +192,11 @@ cmd/versionbump/main.go           auto version bump helper
 internal/cli/                     CLI parsing and validation
 internal/compact/                 compaction engine
 internal/disk/                    statfs and punch-hole helpers
+internal/event/                   JSON event writer
 internal/human/                   size parsing and formatting
+internal/job/                     job ID/state path helpers
 internal/lock/                    lock handling
+internal/preflight/               preflight safety checks
 internal/progress/                progress and verbose output reporter
 internal/state/                   resume state file handling
 internal/version/                 runtime version support
@@ -238,10 +205,9 @@ configure                         creates config.mk for make install
 Makefile                          thin wrapper around cmd/devtool
 VERSION.txt                       source of truth for auto patch version
 nfpm.yaml                         package metadata for deb/rpm generation
-.github/workflows/auto-version-bump.yml  auto patch bump workflow
-.github/workflows/build-packages.yml      CI package build workflow
-.github/workflows/package-commit.yml      package commit workflow
 docs/architecture.md              architecture details
+docs/runbook.md                   emergency runbook
+docs/filesystem-support.md        filesystem notes
 examples/emergency.md             emergency usage example
 ```
 
@@ -249,7 +215,7 @@ examples/emergency.md             emergency usage example
 
 Use `-g` for low-disk emergencies. Plain output can require too much space because rotated data is not compressed.
 
-Always test with `--dry-run` first.
+Always run `--preflight` first.
 
 This tool modifies sparse allocation of the source file. Old data is preserved in the rotated output file after each successful chunk, then the matching range is freed from the source file.
 
