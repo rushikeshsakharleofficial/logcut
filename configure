@@ -9,7 +9,7 @@ logdir="/var/log"
 lockdir="/var/lock"
 go_bin="go"
 version=""
-src="."
+src="./cmd/logcut"
 
 show_help() {
   cat <<'EOF'
@@ -26,7 +26,7 @@ Options:
   --lockdir=PATH       lock directory, default: /var/lock
   --go=PATH            Go command, default: go
   --version=VERSION    build/package version override
-  --src=PATH           Go package source, default: .
+  --src=PATH           Go package source, default: ./cmd/logcut
   --help               show this help
 
 Examples:
