@@ -31,7 +31,7 @@ func main() {
 	mustUpdateFile("nfpm.yaml", regexp.MustCompile(`(?m)^version: .*`), "version: "+next)
 	mustUpdateFile("man/logcut.8", regexp.MustCompile(`logcut [0-9]+\.[0-9]+\.[0-9]+`), "logcut "+next)
 	mustUpdateFile("cmd/devtool/main.go", regexp.MustCompile(`getenv\("VERSION", "[0-9]+\.[0-9]+\.[0-9]+"\)`), `getenv("VERSION", "`+next+`")`)
-	mustUpdateFile("version.go", regexp.MustCompile(`var version = "[0-9]+\.[0-9]+\.[0-9]+"`), `var version = "`+next+`"`)
+	mustUpdateFile("internal/version/version.go", regexp.MustCompile(`Version = "[0-9]+\.[0-9]+\.[0-9]+"`), `Version = "`+next+`"`)
 
 	fmt.Println(next)
 }
