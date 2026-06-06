@@ -13,6 +13,7 @@ logcut \- emergency log compaction and rotation without restarting the applicati
 .IR size ]
 .RB [ -p
 .IR percent ]
+.RB [ -v ]
 .I source-log
 .I rotated-output.gz
 .SH DESCRIPTION
@@ -47,6 +48,17 @@ Use only this percentage of currently free disk space as the working budget for
 the next chunk. The default is 20. The remaining free space is treated as a
 protected buffer for application writes and sudden spikes.
 .TP
+.B -v
+Enable verbose output. This prints detailed per-step and per-chunk logs,
+including read, archive, punch-hole, chunk duration, compression ratio, free
+space before and after, recovered estimate, and next chunk size.
+.TP
+.BI --progress-interval " duration"
+Set the progress summary interval. Examples: 5s, 30s, 1m. The default is 5s.
+.TP
+.B --quiet
+Suppress progress and verbose output.
+.TP
 .B --dry-run
 Print the compaction plan without modifying files.
 .TP
@@ -64,8 +76,20 @@ Gzip emergency mode:
 Recommended emergency mode keeping latest 10 GB active:
 .B sudo logcut -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 .TP
+Verbose emergency mode:
+.B sudo logcut -v -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+.TP
 Dry run:
 .B sudo logcut --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+.SH OUTPUT
+By default, logcut prints the operation plan and periodic progress summaries.
+Progress includes percentage complete, processed bytes, remaining bytes, speed,
+elapsed time, and estimated time remaining.
+.PP
+With
+.B -v,
+logcut also prints detailed chunk logs for read, archive, punch-hole, and final
+chunk status.
 .SH HOW IT WORKS
 For each chunk, logcut performs the following sequence:
 .IP 1. 4
