@@ -22,6 +22,11 @@ const (
 type config struct {
 	Version    string
 	Prefix     string
+	BinDir     string
+	SysconfDir string
+	VarLibDir  string
+	LogDir     string
+	LockDir    string
 	DestDir    string
 	Goos       string
 	Goarch     string
@@ -41,9 +46,15 @@ func getenv(key, fallback string) string {
 }
 
 func loadConfig() config {
+	prefix := getenv("PREFIX", "/usr/local")
 	return config{
-		Version:    getenv("VERSION", "1.0.9"),
-		Prefix:     getenv("PREFIX", "/usr/local"),
+		Version:    getenv("VERSION", "1.0.8"),
+		Prefix:     prefix,
+		BinDir:     getenv("BINDIR", filepath.Join(prefix, "bin")),
+		SysconfDir: getenv("SYSCONFDIR", "/etc/logcut"),
+		VarLibDir:  getenv("VARLIBDIR", "/var/lib/logcut"),
+		LogDir:     getenv("LOGDIR", "/var/log"),
+		LockDir:    getenv("LOCKDIR", "/var/lock"),
 		DestDir:    getenv("DESTDIR", ""),
 		Goos:       getenv("GOOS", "linux"),
 		Goarch:     getenv("GOARCH", runtime.GOARCH),
@@ -51,7 +62,7 @@ func loadConfig() config {
 		NFPMModule: getenv("NFPM_MODULE", "github.com/goreleaser/nfpm/v2/cmd/nfpm@latest"),
 		BuildDir:   getenv("BUILD_DIR", "build"),
 		DistDir:    getenv("DIST_DIR", "dist"),
-		Source:     getenv("SRC", "logcut.go"),
+		Source:     getenv("SRC", "."),
 	}
 }
 
@@ -118,6 +129,9 @@ func usage() {
 	fmt.Println("  tar           Build source tarball using Go archive APIs")
 	fmt.Println("  checksums     Generate SHA256SUMS using Go crypto APIs")
 	fmt.Println("  dist          Build tar, deb, and rpm")
+	fmt.Println("")
+	fmt.Println("Configuration environment variables:")
+	fmt.Println("  PREFIX, BINDIR, SYSCONFDIR, VARLIBDIR, LOGDIR, LOCKDIR, DESTDIR")
 }
 
 func ensureModule() error {
@@ -170,34 +184,43 @@ func install(cfg config) error {
 	if err := build(cfg); err != nil {
 		return err
 	}
-	bindir := filepath.Join(cfg.DestDir, cfg.Prefix, "bin")
-	if err := os.MkdirAll(bindir, 0755); err != nil {
+	binDir := withDest(cfg.DestDir, cfg.BinDir)
+	if err := os.MkdirAll(binDir, 0755); err != nil {
 		return err
 	}
-	if err := copyFile(filepath.Join(cfg.BuildDir, appName), filepath.Join(bindir, appName), 0755); err != nil {
+	if err := copyFile(filepath.Join(cfg.BuildDir, appName), filepath.Join(binDir, appName), 0755); err != nil {
 		return err
 	}
-	for _, dir := range []string{"/etc/logcut", "/var/lib/logcut", "/var/log", "/var/lock", "/usr/share/man/man8", "/usr/share/doc/logcut", "/usr/share/doc/logcut/examples"} {
-		if err := os.MkdirAll(filepath.Join(cfg.DestDir, dir), 0755); err != nil {
+	dirs := []string{
+		cfg.SysconfDir,
+		cfg.VarLibDir,
+		cfg.LogDir,
+		cfg.LockDir,
+		"/usr/share/man/man8",
+		"/usr/share/doc/logcut",
+		"/usr/share/doc/logcut/examples",
+	}
+	for _, dir := range dirs {
+		if err := os.MkdirAll(withDest(cfg.DestDir, dir), 0755); err != nil {
 			return err
 		}
 	}
-	optionalCopy("man/logcut.8", filepath.Join(cfg.DestDir, "/usr/share/man/man8/logcut.8"), 0644)
-	optionalCopy("README.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/README.md"), 0644)
-	optionalCopy("MANUAL.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/MANUAL.md"), 0644)
-	optionalCopy("INSTALL.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/INSTALL.md"), 0644)
-	optionalCopy("LICENSE", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/LICENSE"), 0644)
-	optionalCopy("docs/architecture.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/architecture.md"), 0644)
-	optionalCopy("examples/emergency.md", filepath.Join(cfg.DestDir, "/usr/share/doc/logcut/examples/emergency.md"), 0644)
-	fmt.Println("Installed", filepath.Join(bindir, appName))
-	fmt.Println("Man page installed to", filepath.Join(cfg.DestDir, "/usr/share/man/man8/logcut.8"))
+	optionalCopy("man/logcut.8", withDest(cfg.DestDir, "/usr/share/man/man8/logcut.8"), 0644)
+	optionalCopy("README.md", withDest(cfg.DestDir, "/usr/share/doc/logcut/README.md"), 0644)
+	optionalCopy("MANUAL.md", withDest(cfg.DestDir, "/usr/share/doc/logcut/MANUAL.md"), 0644)
+	optionalCopy("INSTALL.md", withDest(cfg.DestDir, "/usr/share/doc/logcut/INSTALL.md"), 0644)
+	optionalCopy("LICENSE", withDest(cfg.DestDir, "/usr/share/doc/logcut/LICENSE"), 0644)
+	optionalCopy("docs/architecture.md", withDest(cfg.DestDir, "/usr/share/doc/logcut/architecture.md"), 0644)
+	optionalCopy("examples/emergency.md", withDest(cfg.DestDir, "/usr/share/doc/logcut/examples/emergency.md"), 0644)
+	fmt.Println("Installed", filepath.Join(binDir, appName))
+	fmt.Println("Man page installed to", withDest(cfg.DestDir, "/usr/share/man/man8/logcut.8"))
 	return nil
 }
 
 func uninstall(cfg config) error {
 	paths := []string{
-		filepath.Join(cfg.DestDir, cfg.Prefix, "bin", appName),
-		filepath.Join(cfg.DestDir, "/usr/share/man/man8/logcut.8"),
+		filepath.Join(withDest(cfg.DestDir, cfg.BinDir), appName),
+		withDest(cfg.DestDir, "/usr/share/man/man8/logcut.8"),
 	}
 	for _, path := range paths {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
@@ -205,7 +228,7 @@ func uninstall(cfg config) error {
 		}
 		fmt.Println("Removed", path)
 	}
-	fmt.Println("Keeping /etc/logcut, /var/lib/logcut, and logs for safety.")
+	fmt.Println("Keeping", cfg.SysconfDir+",", cfg.VarLibDir+", and logs for safety.")
 	return nil
 }
 
@@ -230,7 +253,17 @@ func packageWithNFPM(cfg config, packager string) error {
 	if packager == "rpm" {
 		target = filepath.Join(cfg.DistDir, fmt.Sprintf("%s-%s-1.x86_64.rpm", appName, cfg.Version))
 	}
-	return run("go", "run", cfg.NFPMModule, "package", "--packager", packager, "--config", "nfpm.yaml", "--target", target)
+	if err := run("go", "run", cfg.NFPMModule, "package", "--packager", packager, "--config", "nfpm.yaml", "--target", target); err != nil {
+		return err
+	}
+	if st, err := os.Stat(target); err != nil || st.Size() == 0 {
+		if err != nil {
+			return fmt.Errorf("package was not created: %s: %w", target, err)
+		}
+		return fmt.Errorf("package was created but is empty: %s", target)
+	}
+	fmt.Println("Created", target)
+	return nil
 }
 
 func sourceTarball(cfg config) error {
@@ -241,7 +274,7 @@ func sourceTarball(cfg config) error {
 	if err := os.MkdirAll(base, 0755); err != nil {
 		return err
 	}
-	files := []string{"logcut.go", "go.mod", "Makefile", "nfpm.yaml", "README.md", "INSTALL.md", "MANUAL.md", "LICENSE", "man/logcut.8", "docs/architecture.md", "examples/emergency.md", ".github/workflows/build-packages.yml"}
+	files := []string{"logcut.go", "version.go", "go.mod", "Makefile", "configure", "nfpm.yaml", "README.md", "INSTALL.md", "MANUAL.md", "LICENSE", "man/logcut.8", "docs/architecture.md", "examples/emergency.md", ".github/workflows/build-packages.yml", ".github/workflows/package-commit.yml"}
 	for _, f := range files {
 		if _, err := os.Stat(f); err == nil {
 			if err := copyFile(f, filepath.Join(base, f), 0644); err != nil {
@@ -352,4 +385,11 @@ func copyFile(src, dst string, mode os.FileMode) error {
 		return err
 	}
 	return out.Close()
+}
+
+func withDest(destDir, path string) string {
+	if destDir == "" {
+		return path
+	}
+	return filepath.Join(destDir, strings.TrimPrefix(path, string(os.PathSeparator)))
 }
