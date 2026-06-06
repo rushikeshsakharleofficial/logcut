@@ -44,6 +44,7 @@ Normal rotation can fail during disk emergencies:
 - Uses state and lock files for safer resume behavior.
 - Supports dry-run planning.
 - Installs a Unix manual page at `/usr/share/man/man8/logcut.8`.
+- Supports `logcut --version`.
 
 ## Basic usage
 
@@ -69,6 +70,12 @@ Dry run first:
 
 ```bash
 sudo logcut --dry-run -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+```
+
+Show installed version:
+
+```bash
+logcut --version
 ```
 
 After installation, read the manual:
@@ -195,6 +202,20 @@ go run ./cmd/devtool rpm
 go run ./cmd/devtool checksums
 ```
 
+## Versioning
+
+The source of truth is `VERSION.txt`.
+
+On normal pushes to `main`, GitHub Actions runs `cmd/versionbump` and increments the patch version automatically. The bump updates:
+
+- `VERSION.txt`
+- `version.go`, used by `logcut --version`
+- `nfpm.yaml`, used by `.deb` and `.rpm`
+- `man/logcut.8`, used by `man logcut`
+- `cmd/devtool/main.go`, used by `make`, `make deb`, and `make rpm`
+
+The package workflow then builds packages from the bumped version.
+
 ## Options
 
 ```text
@@ -203,20 +224,25 @@ go run ./cmd/devtool checksums
 -p <percent>    use only this % of current free space as working budget, default: 20
 --dry-run       print plan only, do not modify files
 --force         allow risky plain output on low disk
+--version       print logcut version
 ```
 
 ## Repository layout
 
 ```text
+VERSION.txt                       source of truth for auto patch version
+version.go                        runtime version support for logcut --version
 logcut.go                         main runtime source
 cmd/devtool/main.go               Go-based build/install/package helper
 cmd/modulecheck/main.go           small Go module bootstrap helper
+cmd/versionbump/main.go           auto version bump helper
 man/logcut.8                      Unix manual page for man logcut
 MANUAL.md                         user manual
 INSTALL.md                        installation and packaging manual
 go.mod                            Go module file
 nfpm.yaml                         package metadata for deb/rpm generation
-.github/workflows/build-packages.yml  CI package build workflow
+.github/workflows/auto-version-bump.yml  auto patch bump workflow
+.github/workflows/build-packages.yml      CI package build workflow
 docs/architecture.md              architecture details
 examples/emergency.md             emergency usage example
 ```
