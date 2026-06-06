@@ -5,7 +5,7 @@ import (
 	"os"
 )
 
-var version = "1.0.2"
+var version = "1.0.4"
 
 func init() {
 	for _, arg := range os.Args[1:] {
