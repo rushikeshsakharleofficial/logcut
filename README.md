@@ -70,7 +70,9 @@ See [INSTALL.md](INSTALL.md) for full build options.
 - Uses only a safe percentage of current free disk space per chunk (default 20%).
 - Optional gzip output written to one final archive.
 - Cuts only on newline boundaries.
-- Frees old blocks via punch-hole after safe archive write and sync.
+- Frees old blocks via punch-hole after safe archive write and sync; drops page cache for the punched range immediately after.
+- Runs at idle IO scheduling class — other processes keep full disk priority.
+- Parallel gzip compression across all available CPUs.
 - Watchdog detects hung chunks and writes emergency state before aborting.
 - State and lock files for safe resume behavior.
 - SIGINT/SIGTERM support — stops cleanly before the next chunk.
@@ -88,8 +90,8 @@ See [INSTALL.md](INSTALL.md) for full build options.
 Given an active log at 90 GB with `-k 10G`:
 
 1. `logcut` identifies the cutoff — keep the last 10 GB, rotate the first 80 GB.
-2. It reads a safe chunk from the start of `debug.log`, compresses it (if `-g`), and appends it to `debug.log.rotated.gz`.
-3. It syncs the output, then punches a hole over the same byte range in `debug.log`, freeing those disk blocks.
+2. It reads a safe chunk from the start of `debug.log`, compresses it in parallel across all CPUs (if `-g`), and appends it to `debug.log.rotated.gz`.
+3. It syncs the output, punches a hole over the same byte range in `debug.log` to free those disk blocks, then drops the page cache for the freed range.
 4. It repeats until the cutoff is reached, recalculating chunk size and throttle on each iteration.
 
 At the end, `debug.log` keeps the latest data and the same inode. `debug.log.rotated.gz` holds the older rotated portion. `ls -lh` on `debug.log` may still show a large apparent size — check real usage with `du -h`.
@@ -108,6 +110,17 @@ Between chunks, logcut evaluates:
 | Total installed RAM | `/proc/meminfo` |
 
 It then adjusts rate limit, sleep between chunks, max chunk size, and gzip compression level. Pass `--rate-limit` or `--sleep-between-chunks` to override.
+
+## System impact during emergencies
+
+logcut is designed to run as a background operation without degrading the machine:
+
+| Mechanism | Effect |
+|-----------|--------|
+| `ioprio_set(IDLE)` | Disk IO deferred to idle slots — app writes always take priority |
+| `fadvise(DONTNEED)` | Page cache for each punched range is released immediately, reducing memory pressure |
+| Parallel gzip | Compression uses all CPUs, minimising the wall-clock time logcut holds IO |
+| Rate limit + sleep | Auto-throttle keeps sustained IO within safe bounds |
 
 ## Runtime output
 
