@@ -43,6 +43,11 @@ func Evaluate(targetPath string) Snapshot {
 		memRatio = float64(memAvail) / float64(memTotal)
 	}
 
+	snap := classify(cpus, load1, loadRatio, memAvail, memTotal, memRatio, free)
+	return snap
+}
+
+func classify(cpus int, load1, loadRatio float64, memAvail, memTotal int64, memRatio float64, free int64) Snapshot {
 	pressure := "low"
 	rate := int64(75 * human.MiB)
 	sleep := 500 * time.Millisecond
@@ -54,18 +59,26 @@ func Evaluate(targetPath string) Snapshot {
 		sleep = 3 * time.Second
 		maxChunk = 32 * human.MiB
 		reason = "critical disk, load, or memory pressure"
-	} else if free < 2*human.GiB || loadRatio >= 1.00 || memRatio < 0.15 {
+	} else if free < 2*human.GiB || loadRatio >= 1.00 || memRatio < 0.15 || (memTotal > 0 && memTotal <= 6*human.GiB && memRatio < 0.50) {
 		pressure = "high"
 		rate = 25 * human.MiB
 		sleep = 2 * time.Second
 		maxChunk = 64 * human.MiB
-		reason = "high disk, load, or memory pressure"
-	} else if free < 5*human.GiB || loadRatio >= 0.70 || memRatio < 0.25 {
+		if memTotal > 0 && memTotal <= 6*human.GiB {
+			reason = "small memory machine"
+		} else {
+			reason = "high disk, load, or memory pressure"
+		}
+	} else if free < 5*human.GiB || loadRatio >= 0.70 || memRatio < 0.25 || (memTotal > 0 && memTotal <= 8*human.GiB && memRatio < 0.60) {
 		pressure = "medium"
 		rate = 50 * human.MiB
 		sleep = time.Second
 		maxChunk = 128 * human.MiB
-		reason = "moderate disk, load, or memory pressure"
+		if memTotal > 0 && memTotal <= 8*human.GiB {
+			reason = "constrained memory machine"
+		} else {
+			reason = "moderate disk, load, or memory pressure"
+		}
 	}
 	return Snapshot{CPUs: cpus, Load1: load1, LoadRatio: loadRatio, MemAvailable: memAvail, MemTotal: memTotal, MemAvailableRatio: memRatio, FreeBytes: free, Pressure: pressure, RateLimitBytes: rate, SleepBetweenChunks: sleep, MaxChunkBytes: maxChunk, CompressLevel: 1, Reason: reason}
 }

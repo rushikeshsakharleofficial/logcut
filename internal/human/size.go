@@ -3,6 +3,7 @@ package human
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -43,10 +44,20 @@ func ParseSize(s string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	if math.IsNaN(n) || math.IsInf(n, 0) {
+		return 0, errors.New("size must be finite")
+	}
 	if n <= 0 {
 		return 0, errors.New("size must be greater than zero")
 	}
-	return int64(n * float64(mult)), nil
+	bytes := n * float64(mult)
+	if bytes < 1 {
+		return 0, errors.New("size must be at least one byte")
+	}
+	if bytes >= float64(1<<63-1) {
+		return 0, errors.New("size is too large")
+	}
+	return int64(bytes), nil
 }
 
 func FormatBytes(n int64) string {

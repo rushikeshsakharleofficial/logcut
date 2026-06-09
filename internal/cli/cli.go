@@ -9,6 +9,7 @@ import (
 
 	"github.com/rushikeshsakharleofficial/logcut/internal/compact"
 	"github.com/rushikeshsakharleofficial/logcut/internal/job"
+	"github.com/rushikeshsakharleofficial/logcut/internal/lock"
 	"github.com/rushikeshsakharleofficial/logcut/internal/preflight"
 	"github.com/rushikeshsakharleofficial/logcut/internal/state"
 	"github.com/rushikeshsakharleofficial/logcut/internal/version"
@@ -23,6 +24,8 @@ func Run(args []string) int {
 			return cleanStateCmd(args[1:])
 		case "list-state":
 			return listStateCmd(args[1:])
+		case "force-unlock":
+			return forceUnlockCmd(args[1:])
 		}
 	}
 
@@ -41,6 +44,9 @@ func Run(args []string) int {
 	fs.DurationVar(&cfg.ProgressInterval, "progress-interval", 5*time.Second, "progress summary interval, example: 5s, 30s, 1m")
 	fs.StringVar(&cfg.StopFreeAboveRaw, "stop-free-above", "", "stop safely after current chunk once free space is above this value")
 	fs.DurationVar(&cfg.MaxRuntime, "max-runtime", 0, "stop safely after current chunk once runtime is reached")
+	fs.DurationVar(&cfg.ChunkTimeout, "chunk-timeout", cfg.ChunkTimeout, "maximum time a single chunk can take before watchdog abort, default: 5m")
+	fs.StringVar(&cfg.RateLimitRaw, "rate-limit", "", "maximum raw read/archive rate per second, example: 25M, 100M")
+	fs.DurationVar(&cfg.SleepBetweenChunks, "sleep-between-chunks", 0, "sleep after each chunk, example: 500ms, 2s")
 	fs.StringVar(&cfg.LogFile, "log-file", "", "also write run output to this file")
 	fs.IntVar(&cfg.CompressLevel, "compress-level", cfg.CompressLevel, "gzip compression level: 1 fastest, 9 best, -1 default")
 	fs.StringVar(&cfg.VerifyMode, "verify", cfg.VerifyMode, "gzip verification mode: full or none")
@@ -75,8 +81,8 @@ func Run(args []string) int {
 		fmt.Fprintln(os.Stderr, "Use either --quiet or -v, not both")
 		return 2
 	}
-	if cfg.CompressLevel < -1 || cfg.CompressLevel > 9 || cfg.CompressLevel == 0 {
-		fmt.Fprintln(os.Stderr, "Invalid --compress-level. Use -1 or 1..9")
+	if cfg.CompressLevel < -1 || cfg.CompressLevel > 9 {
+		fmt.Fprintln(os.Stderr, "Invalid --compress-level. Use -1, 0, or 1..9")
 		return 2
 	}
 	cfg.Source = pos[0]
@@ -174,6 +180,43 @@ func listStateCmd(args []string) int {
 	return 0
 }
 
+func forceUnlockCmd(args []string) int {
+	cfg := compact.DefaultConfig()
+	fs := flag.NewFlagSet("logcut force-unlock", flag.ContinueOnError)
+	fs.StringVar(&cfg.LockDir, "lock-dir", cfg.LockDir, "lock directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	pos := fs.Args()
+	if len(pos) != 2 {
+		fmt.Println("Usage: logcut force-unlock [--lock-dir DIR] <source-log> <rotated-output>")
+		return 2
+	}
+	src, err := filepath.Abs(pos[0])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	out, err := filepath.Abs(pos[1])
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	lockPath := job.LockPath(cfg.LockDir, src, out)
+	pid, removed, err := lock.ForceUnlock(lockPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "ERROR:", err)
+		return 1
+	}
+	if removed {
+		fmt.Printf("Removed stale lock held by dead PID %d: %s\n", pid, lockPath)
+	} else {
+		fmt.Printf("Process %d is still alive; lock not removed: %s\n", pid, lockPath)
+		return 1
+	}
+	return 0
+}
+
 func usage() {
 	fmt.Println("logcut - emergency log compaction without app restart")
 	fmt.Println("")
@@ -182,6 +225,7 @@ func usage() {
 	fmt.Println("  logcut status <source-log> <rotated-output>")
 	fmt.Println("  logcut list-state")
 	fmt.Println("  logcut clean-state <source-log> <rotated-output>")
+	fmt.Println("  logcut force-unlock <source-log> <rotated-output>")
 	fmt.Println("")
 	fmt.Println("Examples:")
 	fmt.Println("  logcut --preflight -g -k 10G app.log app.rotated.log.gz")
@@ -198,9 +242,12 @@ func usage() {
 	fmt.Println("  --preflight                run safety checks only")
 	fmt.Println("  --stop-free-above <size>   stop safely once free space is above size")
 	fmt.Println("  --max-runtime <duration>   stop safely once runtime is reached")
+	fmt.Println("  --chunk-timeout <duration> max per-chunk time before watchdog abort, default: 5m")
+	fmt.Println("  --rate-limit <size>        maximum raw read/archive rate per second")
+	fmt.Println("  --sleep-between-chunks <d> sleep after each chunk")
 	fmt.Println("  --log-file <path>          also write run output to file")
 	fmt.Println("  --json                     emit JSON events")
-	fmt.Println("  --compress-level <level>   gzip level: -1 or 1..9")
+	fmt.Println("  --compress-level <level>   gzip level: 0 auto, -1 default, or 1..9")
 	fmt.Println("  --verify <mode>            gzip verification: full or none")
 	fmt.Println("  --state-dir <dir>          state directory")
 	fmt.Println("  --lock-dir <dir>           lock directory")

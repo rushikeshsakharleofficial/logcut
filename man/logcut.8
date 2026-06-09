@@ -107,6 +107,9 @@ Preflight:
 Production emergency mode:
 .B sudo logcut -v --log-file /var/log/logcut-run.log --stop-free-above 20G --max-runtime 30m --rate-limit 100M --sleep-between-chunks 500ms --compress-level 1 -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 .TP
+Small RAM machine mode:
+.B sudo logcut -v --log-file /var/log/logcut-run.log --stop-free-above 20G --max-runtime 30m --rate-limit 25M --sleep-between-chunks 2s --compress-level 1 --verify none -p 5 -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
+.TP
 JSON automation mode:
 .B sudo logcut --json -g -k 10G /var/log/app/debug.log /var/log/app/debug.log.rotated.gz
 .SH OUTPUT

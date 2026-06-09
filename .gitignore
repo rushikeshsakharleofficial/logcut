@@ -1,6 +1,7 @@
 /build/
 /dist/
 /packaging/
+/.tmp/
 /config.mk
 *.deb
 *.rpm
@@ -8,3 +9,5 @@
 *.sha256
 logcut
 *.test
+# Added by code-review-graph
+.code-review-graph/
