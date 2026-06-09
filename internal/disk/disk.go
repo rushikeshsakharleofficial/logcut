@@ -63,6 +63,32 @@ func PunchHole(f *os.File, offset, length int64) error {
 	return nil
 }
 
+// SetIdleIO sets the calling process to idle IO scheduling class so other
+// processes get full disk priority during emergency compaction.
+// Errors are silently ignored — logcut works correctly without this.
+func SetIdleIO() {
+	const (
+		ioprioWhoProcess = 1
+		ioprioClassIdle  = 3
+	)
+	prio := (ioprioClassIdle << 13) | 0
+	syscall.Syscall(syscall.SYS_IOPRIO_SET, uintptr(ioprioWhoProcess), 0, uintptr(prio))
+}
+
+// FadviseDropCache advises the kernel to evict the given file range from page
+// cache after it has been punch-holed. Errors are silently ignored.
+func FadviseDropCache(f *os.File, offset, length int64) {
+	const posixFadvDontneed = 4
+	syscall.Syscall6(
+		syscall.SYS_FADVISE64,
+		uintptr(f.Fd()),
+		uintptr(offset),
+		uintptr(length),
+		posixFadvDontneed,
+		0, 0,
+	)
+}
+
 func TestPunchHole(dir string) error {
 	p := filepath.Join(dir, ".logcut-punch-test")
 	f, err := os.OpenFile(p, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0600)

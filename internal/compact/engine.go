@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"compress/gzip"
 	"errors"
+	pgzip "github.com/klauspost/pgzip"
 	"fmt"
 	"io"
 	"os"
@@ -179,6 +180,7 @@ func Run(cfg Config) error {
 		return err
 	}
 	defer src.Close()
+	disk.SetIdleIO()
 
 	free, err := disk.FreeBytes(outDir)
 	if err != nil {
@@ -332,6 +334,7 @@ func Run(cfg Config) error {
 			writeEmergency("sync_failed", statePath, jobState, chunkNo, offset, err)
 			return err
 		}
+		disk.FadviseDropCache(src, offset, end-offset)
 		bumpActivity(&lastActivity)
 		jobState.LastPunchedOffset = end
 		if err := state.Save(statePath, jobState); err != nil {
@@ -518,7 +521,7 @@ func estimateCompressionRatio(src *os.File, offset, max int64, gzipEnabled bool,
 			}
 		}
 	}()
-	gw, err := gzip.NewWriterLevel(pw, level)
+	gw, err := pgzip.NewWriterLevel(pw, level)
 	if err != nil {
 		return 0, err
 	}
@@ -585,7 +588,7 @@ func appendLineSafeChunk(outputPath string, src *os.File, start, target, cutoff 
 	writer := io.Writer(out)
 	closeWriter := func() error { return nil }
 	if gzipEnabled {
-		gw, err := gzip.NewWriterLevel(out, level)
+		gw, err := pgzip.NewWriterLevel(out, level)
 		if err != nil {
 			_ = out.Close()
 			return start, 0, 0, err
