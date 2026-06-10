@@ -17,7 +17,7 @@ DEVTOOL := SRC=$(SRC) PREFIX=$(PREFIX) BINDIR=$(BINDIR) SYSCONFDIR=$(SYSCONFDIR)
 TEST_TMP ?= .tmp/local-test
 TEST_LOG_LINES ?= 200000
 
-.PHONY: all modulecheck build install uninstall reinstall clean test dry-run test-logfile test-small-machine package deb rpm tar dist checksums help
+.PHONY: all modulecheck build install uninstall reinstall clean test test-disaster dry-run test-logfile test-small-machine package deb rpm tar dist checksums help
 
 all: build
 
@@ -37,6 +37,9 @@ reinstall: uninstall install
 
 test:
 	$(GO) test ./...
+
+test-disaster:
+	$(GO) test -v -run TestIntegrationDisasterRecovery ./internal/cli/ -timeout 60m
 
 dry-run: build
 	@echo "Example dry run command:"
